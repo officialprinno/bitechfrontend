@@ -1,1 +1,101 @@
-/* You can add global styles to this file, and also import other style files */
+@import "tailwindcss";
+
+/* Bitech provisional brand tokens (D15) */
+:root {
+  --brand-ink: #0b1f2a;
+  --brand-ink-soft: #163445;
+  --brand-signal: #0e8f8b;
+  --brand-signal-hover: #0b7471;
+  --brand-signal-muted: #d8f3f2;
+  --brand-sun: #e8a317;
+
+  --surface-0: #f4f7f8;
+  --surface-1: #ffffff;
+  --border-subtle: #d5dee3;
+
+  --text-primary: #0b1f2a;
+  --text-secondary: #4a5c66;
+  --text-inverse: #f4f7f8;
+
+  --success: #1b7f4e;
+  --warning: #b86e00;
+  --danger: #b42318;
+  --focus-ring: #0e8f8b;
+
+  --font-display: "Sora", system-ui, sans-serif;
+  --font-body: "Manrope", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, monospace;
+
+  --radius-xl: 0.75rem;
+  --radius-2xl: 1rem;
+  --shadow-soft: 0 1px 2px rgb(11 31 42 / 6%), 0 8px 24px rgb(11 31 42 / 6%);
+  --motion-fast: 150ms;
+  --motion-base: 220ms;
+  --motion-ease: cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+html.dark,
+[data-theme="dark"] {
+  --brand-ink: #e8eef1;
+  --brand-ink-soft: #c5d2d9;
+  --brand-signal: #2ec4be;
+  --brand-signal-hover: #53d4cf;
+  --brand-signal-muted: #14353a;
+  --brand-sun: #f0b43a;
+  --surface-0: #0a151c;
+  --surface-1: #12222c;
+  --border-subtle: #243641;
+  --text-primary: #e8eef1;
+  --text-secondary: #9bb0ba;
+  --text-inverse: #0a151c;
+  --success: #3dd68c;
+  --warning: #f5a524;
+  --danger: #f04438;
+  --focus-ring: #2ec4be;
+  --shadow-soft: 0 1px 2px rgb(0 0 0 / 40%), 0 8px 24px rgb(0 0 0 / 35%);
+}
+
+@theme {
+  --color-ink: var(--brand-ink);
+  --color-ink-soft: var(--brand-ink-soft);
+  --color-signal: var(--brand-signal);
+  --color-signal-hover: var(--brand-signal-hover);
+  --color-signal-muted: var(--brand-signal-muted);
+  --color-sun: var(--brand-sun);
+  --color-surface-0: var(--surface-0);
+  --color-surface-1: var(--surface-1);
+  --color-border: var(--border-subtle);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-danger: var(--danger);
+  --font-display: var(--font-display);
+  --font-sans: var(--font-body);
+  --font-mono: var(--font-mono);
+  --radius-xl: var(--radius-xl);
+  --radius-2xl: var(--radius-2xl);
+  --shadow-soft: var(--shadow-soft);
+}
+
+@layer base {
+  html,
+  body {
+    height: 100%;
+  }
+
+  body {
+    margin: 0;
+    font-family: var(--font-body);
+    color: var(--text-primary);
+    background:
+      radial-gradient(1200px 600px at 10% -10%, rgb(14 143 139 / 12%), transparent 55%),
+      radial-gradient(900px 500px at 100% 0%, rgb(232 163 23 / 8%), transparent 50%),
+      var(--surface-0);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  *:focus-visible {
+    outline: 2px solid var(--focus-ring);
+    outline-offset: 2px;
+  }
+}

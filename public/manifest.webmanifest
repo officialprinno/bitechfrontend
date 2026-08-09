@@ -1,0 +1,18 @@
+{
+  "name": "Bitech WiFi",
+  "short_name": "Bitech",
+  "description": "Intaneti kwa urahisi",
+  "lang": "sw",
+  "start_url": "/",
+  "display": "browser",
+  "background_color": "#0B1F2A",
+  "theme_color": "#0B1F2A",
+  "icons": [
+    {
+      "src": "brand/logo-mark.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}

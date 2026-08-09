@@ -1,0 +1,238 @@
+import { DatePipe } from '@angular/common';
+import { Component, inject, signal } from '@angular/core';
+import { FormsModule } from '@angular/forms';
+
+import { ApiClient } from '../../../core/api/api-client';
+import { AppError } from '../../../core/models/app-error';
+import { ErrorStateComponent } from '../../../shared/ui/error-state/error-state.component';
+import { SkeletonComponent } from '../../../shared/ui/skeleton/skeleton.component';
+
+interface VoucherRow {
+  id: string;
+  username: string;
+  password: string;
+  phone_number: string;
+  purchase_type: string;
+  package_name: string;
+  site_name: string;
+  node_identifier: string;
+  status: string;
+  mac_address: string;
+  bound_device_name: string;
+  purchased_at: string | null;
+  expires_at: string | null;
+  provisioning_status: string;
+  payment: {
+    amount: string | null;
+    status: string | null;
+    provider: string | null;
+  };
+}
+
+interface SearchResult {
+  count: number;
+  results: VoucherRow[];
+}
+
+@Component({
+  selector: 'app-admin-support',
+  standalone: true,
+  imports: [FormsModule, DatePipe, ErrorStateComponent, SkeletonComponent],
+  template: `
+    <section class="space-y-6">
+      <div>
+        <h1 class="font-display text-2xl font-bold text-ink">Support</h1>
+        <p class="mt-1 text-sm text-[var(--text-secondary)]">
+          Tafuta voucher kwa namba ya simu, code, MAC, au tarehe
+        </p>
+      </div>
+
+      <form
+        class="grid gap-3 rounded-2xl border border-border bg-surface-1 p-4 shadow-soft sm:grid-cols-2 lg:grid-cols-3"
+        (ngSubmit)="search()"
+      >
+        <label class="block text-sm">
+          <span class="text-[var(--text-secondary)]">Simu (primary)</span>
+          <input
+            class="mt-1 w-full rounded-xl border border-border bg-surface-0 px-3 py-2 text-ink"
+            [(ngModel)]="phone"
+            name="phone"
+            placeholder="2557…"
+            autocomplete="tel"
+          />
+        </label>
+        <label class="block text-sm">
+          <span class="text-[var(--text-secondary)]">Code</span>
+          <input
+            class="mt-1 w-full rounded-xl border border-border bg-surface-0 px-3 py-2 font-mono text-ink"
+            [(ngModel)]="code"
+            name="code"
+            placeholder="username"
+          />
+        </label>
+        <label class="block text-sm">
+          <span class="text-[var(--text-secondary)]">MAC</span>
+          <input
+            class="mt-1 w-full rounded-xl border border-border bg-surface-0 px-3 py-2 font-mono text-ink"
+            [(ngModel)]="mac"
+            name="mac"
+            placeholder="AA:BB:…"
+          />
+        </label>
+        <label class="block text-sm">
+          <span class="text-[var(--text-secondary)]">Kutoka</span>
+          <input
+            type="date"
+            class="mt-1 w-full rounded-xl border border-border bg-surface-0 px-3 py-2 text-ink"
+            [(ngModel)]="dateFrom"
+            name="dateFrom"
+          />
+        </label>
+        <label class="block text-sm">
+          <span class="text-[var(--text-secondary)]">Hadi</span>
+          <input
+            type="date"
+            class="mt-1 w-full rounded-xl border border-border bg-surface-0 px-3 py-2 text-ink"
+            [(ngModel)]="dateTo"
+            name="dateTo"
+          />
+        </label>
+        <div class="flex items-end">
+          <button
+            type="submit"
+            class="w-full rounded-xl bg-signal px-4 py-2.5 text-sm font-semibold text-ink disabled:opacity-50"
+            [disabled]="loading()"
+          >
+            {{ loading() ? 'Inatafuta…' : 'Tafuta' }}
+          </button>
+        </div>
+      </form>
+
+      @if (error()) {
+        <app-error-state title="Hitilafu" [message]="error()!" />
+      }
+
+      @if (loading()) {
+        <app-skeleton height="10rem" />
+      } @else if (searched()) {
+        <div class="rounded-2xl border border-border bg-surface-1 p-4 shadow-soft">
+          <p class="text-sm text-[var(--text-secondary)]">
+            Matokeo: <span class="font-semibold text-ink">{{ count() }}</span>
+          </p>
+
+          <div class="mt-4 overflow-x-auto">
+            <table class="w-full min-w-[48rem] text-left text-sm">
+              <thead class="border-b border-border text-[var(--text-secondary)]">
+                <tr>
+                  <th class="px-2 py-2 font-semibold">Code</th>
+                  <th class="px-2 py-2 font-semibold">Simu</th>
+                  <th class="px-2 py-2 font-semibold">Aina</th>
+                  <th class="px-2 py-2 font-semibold">Package</th>
+                  <th class="px-2 py-2 font-semibold">Site / Node</th>
+                  <th class="px-2 py-2 font-semibold">Hali</th>
+                  <th class="px-2 py-2 font-semibold">Tarehe</th>
+                </tr>
+              </thead>
+              <tbody>
+                @for (v of results(); track v.id) {
+                  <tr class="border-b border-border/70 align-top">
+                    <td class="px-2 py-3">
+                      <p class="font-mono font-semibold text-signal">{{ v.username }}</p>
+                      <p class="text-xs text-[var(--text-secondary)]">
+                        MAC {{ v.mac_address || '—' }}
+                        @if (v.bound_device_name) {
+                          · {{ v.bound_device_name }}
+                        }
+                      </p>
+                    </td>
+                    <td class="px-2 py-3 font-mono text-ink">{{ v.phone_number }}</td>
+                    <td class="px-2 py-3 capitalize text-[var(--text-secondary)]">
+                      {{ v.purchase_type }}
+                    </td>
+                    <td class="px-2 py-3 text-ink">
+                      {{ v.package_name }}
+                      @if (v.payment.amount) {
+                        <p class="text-xs text-[var(--text-secondary)]">
+                          TZS {{ v.payment.amount }} · {{ v.payment.provider }}
+                        </p>
+                      }
+                    </td>
+                    <td class="px-2 py-3 text-[var(--text-secondary)]">
+                      {{ v.site_name }}
+                      <p class="text-xs">{{ v.node_identifier }}</p>
+                    </td>
+                    <td class="px-2 py-3">
+                      <span
+                        [class]="
+                          v.status === 'active'
+                            ? 'text-success'
+                            : v.status === 'expired' || v.status === 'failed'
+                              ? 'text-danger'
+                              : 'text-signal'
+                        "
+                      >
+                        {{ v.status }}
+                      </span>
+                    </td>
+                    <td class="px-2 py-3 text-xs text-[var(--text-secondary)]">
+                      {{ v.purchased_at | date: 'medium' }}
+                    </td>
+                  </tr>
+                } @empty {
+                  <tr>
+                    <td colspan="7" class="px-2 py-8 text-[var(--text-secondary)]">
+                      Hakuna voucher zinazolingana.
+                    </td>
+                  </tr>
+                }
+              </tbody>
+            </table>
+          </div>
+        </div>
+      }
+    </section>
+  `,
+})
+export class AdminSupportComponent {
+  private readonly api = inject(ApiClient);
+
+  phone = '';
+  code = '';
+  mac = '';
+  dateFrom = '';
+  dateTo = '';
+
+  readonly loading = signal(false);
+  readonly error = signal<string | null>(null);
+  readonly searched = signal(false);
+  readonly count = signal(0);
+  readonly results = signal<VoucherRow[]>([]);
+
+  search(): void {
+    this.error.set(null);
+    this.loading.set(true);
+    this.searched.set(true);
+    this.api
+      .get<SearchResult>('/admin/vouchers/', {
+        phone: this.phone.trim() || undefined,
+        code: this.code.trim() || undefined,
+        mac: this.mac.trim() || undefined,
+        purchased_from: this.dateFrom || undefined,
+        purchased_to: this.dateTo || undefined,
+        page_size: 50,
+      })
+      .subscribe({
+        next: (data) => {
+          this.count.set(data.count);
+          this.results.set(data.results ?? []);
+          this.loading.set(false);
+        },
+        error: (err: unknown) => {
+          this.error.set(err instanceof AppError ? err.message : 'Hitilafu.');
+          this.results.set([]);
+          this.count.set(0);
+          this.loading.set(false);
+        },
+      });
+  }
+}
