@@ -27,6 +27,9 @@ interface VoucherRow {
   settlement_status: string;
   settlement_mode: string;
   is_unpaid: boolean;
+  is_used: boolean;
+  mac_address: string;
+  device_name: string;
   site_name: string;
   node_identifier: string;
   issued_at: string;
@@ -50,6 +53,9 @@ interface BatchItem {
   provisioning_status: string;
   package_name?: string;
   amount?: string;
+  is_used?: boolean;
+  mac_address?: string;
+  device_name?: string;
 }
 
 interface BatchDetail extends BatchRow {
@@ -104,6 +110,17 @@ interface BatchDetail extends BatchRow {
                       <p class="text-xs text-[var(--text-secondary)]">
                         {{ item.package_name || b.package_name_snapshot }}
                       </p>
+                      @if (item.is_used) {
+                        <p class="mt-1 text-xs text-signal">Imetumika</p>
+                        <p class="font-mono text-xs text-[var(--text-secondary)]">
+                          MAC: {{ item.mac_address || '—' }}
+                        </p>
+                        <p class="text-xs text-ink">
+                          Kifaa: {{ item.device_name || 'Hakijulikani' }}
+                        </p>
+                      } @else {
+                        <p class="mt-1 text-xs text-[var(--text-secondary)]">Haijatumika</p>
+                      }
                     </div>
                     <div class="text-right text-xs text-[var(--text-secondary)]">
                       <p>{{ item.provisioning_status }}</p>
@@ -192,12 +209,13 @@ interface BatchDetail extends BatchRow {
           </p>
         } @else {
           <div class="overflow-x-auto rounded-2xl border border-border bg-surface-1 shadow-soft">
-            <table class="w-full min-w-[36rem] text-left text-sm">
+            <table class="w-full min-w-[44rem] text-left text-sm">
               <thead class="border-b border-border text-[var(--text-secondary)]">
                 <tr>
                   <th class="px-4 py-3 font-semibold">Voucher</th>
                   <th class="px-4 py-3 font-semibold">Package</th>
                   <th class="px-4 py-3 font-semibold">Bei</th>
+                  <th class="px-4 py-3 font-semibold">Matumizi</th>
                   <th class="px-4 py-3 font-semibold">Hali</th>
                   <th class="px-4 py-3 font-semibold">Tarehe</th>
                 </tr>
@@ -219,6 +237,19 @@ interface BatchDetail extends BatchRow {
                     <td class="px-4 py-3 text-ink">{{ v.package_name }}</td>
                     <td class="px-4 py-3 text-[var(--text-secondary)]">
                       TZS {{ v.amount | number: '1.0-0' }}
+                    </td>
+                    <td class="px-4 py-3">
+                      @if (v.is_used) {
+                        <span class="font-semibold text-signal">Imetumika</span>
+                        <p class="mt-0.5 font-mono text-xs text-[var(--text-secondary)]">
+                          MAC: {{ v.mac_address || '—' }}
+                        </p>
+                        <p class="text-xs text-ink">
+                          Kifaa: {{ v.device_name || 'Hakijulikani' }}
+                        </p>
+                      } @else {
+                        <span class="text-[var(--text-secondary)]">Haijatumika</span>
+                      }
                     </td>
                     <td class="px-4 py-3">
                       <span [class]="v.is_unpaid ? 'text-warning' : 'text-success'">

@@ -1,6 +1,6 @@
 import { Injectable, computed, inject, signal } from '@angular/core';
 import { Router } from '@angular/router';
-import { Observable, tap } from 'rxjs';
+import { Observable, finalize, shareReplay, tap, throwError } from 'rxjs';
 
 import { ApiClient } from '../api/api-client';
 import { AuthUser, LoginResponse, RefreshResponse } from './auth.models';
@@ -16,6 +16,7 @@ export class AuthService {
 
   private readonly userSignal = signal<AuthUser | null>(this.readUser());
   private readonly accessSignal = signal<string | null>(sessionStorage.getItem(ACCESS_KEY));
+  private refreshInFlight: Observable<RefreshResponse> | null = null;
 
   readonly user = this.userSignal.asReadonly();
   readonly accessToken = this.accessSignal.asReadonly();
@@ -23,6 +24,10 @@ export class AuthService {
   readonly isSuperAdmin = computed(() => this.userSignal()?.role === 'superadmin');
   readonly isAgent = computed(() => this.userSignal()?.kind === 'agent' || this.userSignal()?.role === 'agent');
   readonly isAdmin = computed(() => this.userSignal()?.kind === 'admin' || (!!this.userSignal() && !this.isAgent()));
+
+  hasRefreshToken(): boolean {
+    return !!sessionStorage.getItem(REFRESH_KEY);
+  }
 
   login(username: string, password: string): Observable<LoginResponse> {
     return this.api
@@ -45,21 +50,31 @@ export class AuthService {
   refresh(): Observable<RefreshResponse> {
     const refresh = sessionStorage.getItem(REFRESH_KEY);
     if (!refresh) {
-      throw new Error('Hakuna refresh token.');
+      return throwError(() => new Error('Hakuna refresh token.'));
     }
-    return this.api.post<RefreshResponse, { refresh: string }>('/auth/refresh/', { refresh }).pipe(
-      tap((res) => {
-        sessionStorage.setItem(ACCESS_KEY, res.access);
-        this.accessSignal.set(res.access);
-        if (res.refresh) {
-          sessionStorage.setItem(REFRESH_KEY, res.refresh);
-        }
-      }),
-    );
+    if (!this.refreshInFlight) {
+      this.refreshInFlight = this.api
+        .post<RefreshResponse, { refresh: string }>('/auth/refresh/', { refresh })
+        .pipe(
+          tap((res) => {
+            sessionStorage.setItem(ACCESS_KEY, res.access);
+            this.accessSignal.set(res.access);
+            if (res.refresh) {
+              sessionStorage.setItem(REFRESH_KEY, res.refresh);
+            }
+          }),
+          finalize(() => {
+            this.refreshInFlight = null;
+          }),
+          shareReplay({ bufferSize: 1, refCount: true }),
+        );
+    }
+    return this.refreshInFlight;
   }
 
   logout(redirect = true): void {
     const wasAgent = this.isAgent();
+    this.refreshInFlight = null;
     sessionStorage.removeItem(ACCESS_KEY);
     sessionStorage.removeItem(REFRESH_KEY);
     sessionStorage.removeItem(USER_KEY);

@@ -1,5 +1,5 @@
 import { DatePipe } from '@angular/common';
-import { Component, inject, signal } from '@angular/core';
+import { Component, OnInit, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 
 import { ApiClient } from '../../../core/api/api-client';
@@ -13,10 +13,14 @@ interface VoucherRow {
   password: string;
   phone_number: string;
   purchase_type: string;
+  source: 'portal' | 'agent';
+  agent_code: string;
+  agent_name: string;
   package_name: string;
   site_name: string;
   node_identifier: string;
   status: string;
+  is_used: boolean;
   mac_address: string;
   bound_device_name: string;
   purchased_at: string | null;
@@ -41,10 +45,49 @@ interface SearchResult {
   template: `
     <section class="space-y-6">
       <div>
-        <h1 class="font-display text-2xl font-bold text-ink">Support</h1>
+        <h1 class="font-display text-2xl font-bold text-ink">Vouchers / Support</h1>
         <p class="mt-1 text-sm text-[var(--text-secondary)]">
-          Tafuta voucher kwa namba ya simu, code, MAC, au tarehe
+          Portal (wajinunulia) + agent — orodha ya karibuni, au tafuta kwa simu/code/MAC
         </p>
+      </div>
+
+      <div class="flex flex-wrap gap-2 text-sm">
+        <button
+          type="button"
+          class="rounded-xl px-3 py-1.5 font-semibold"
+          [class]="
+            source() === 'all'
+              ? 'bg-signal text-[var(--text-inverse)]'
+              : 'bg-surface-2 text-[var(--text-secondary)]'
+          "
+          (click)="setSource('all')"
+        >
+          Zote
+        </button>
+        <button
+          type="button"
+          class="rounded-xl px-3 py-1.5 font-semibold"
+          [class]="
+            source() === 'portal'
+              ? 'bg-signal text-[var(--text-inverse)]'
+              : 'bg-surface-2 text-[var(--text-secondary)]'
+          "
+          (click)="setSource('portal')"
+        >
+          Portal (wajinunulia)
+        </button>
+        <button
+          type="button"
+          class="rounded-xl px-3 py-1.5 font-semibold"
+          [class]="
+            source() === 'agent'
+              ? 'bg-signal text-[var(--text-inverse)]'
+              : 'bg-surface-2 text-[var(--text-secondary)]'
+          "
+          (click)="setSource('agent')"
+        >
+          Agents
+        </button>
       </div>
 
       <form
@@ -52,7 +95,7 @@ interface SearchResult {
         (ngSubmit)="search()"
       >
         <label class="block text-sm">
-          <span class="text-[var(--text-secondary)]">Simu (primary)</span>
+          <span class="text-[var(--text-secondary)]">Simu</span>
           <input
             class="mt-1 w-full rounded-xl border border-border bg-surface-0 px-3 py-2 text-ink"
             [(ngModel)]="phone"
@@ -97,13 +140,20 @@ interface SearchResult {
             name="dateTo"
           />
         </label>
-        <div class="flex items-end">
+        <div class="flex items-end gap-2">
           <button
             type="submit"
-            class="w-full rounded-xl bg-signal px-4 py-2.5 text-sm font-semibold text-ink disabled:opacity-50"
+            class="w-full rounded-xl bg-signal px-4 py-2.5 text-sm font-semibold text-[var(--text-inverse)] disabled:opacity-50"
             [disabled]="loading()"
           >
             {{ loading() ? 'Inatafuta…' : 'Tafuta' }}
+          </button>
+          <button
+            type="button"
+            class="rounded-xl border border-border px-3 py-2.5 text-sm font-semibold text-[var(--text-secondary)]"
+            (click)="clearAndRecent()"
+          >
+            Onyesha karibuni
           </button>
         </div>
       </form>
@@ -118,17 +168,19 @@ interface SearchResult {
         <div class="rounded-2xl border border-border bg-surface-1 p-4 shadow-soft">
           <p class="text-sm text-[var(--text-secondary)]">
             Matokeo: <span class="font-semibold text-ink">{{ count() }}</span>
+            <span class="ml-2 text-xs">(inaonyesha hadi 50 za mwisho)</span>
           </p>
 
           <div class="mt-4 overflow-x-auto">
-            <table class="w-full min-w-[48rem] text-left text-sm">
+            <table class="w-full min-w-[56rem] text-left text-sm">
               <thead class="border-b border-border text-[var(--text-secondary)]">
                 <tr>
                   <th class="px-2 py-2 font-semibold">Code</th>
+                  <th class="px-2 py-2 font-semibold">Chanzo</th>
                   <th class="px-2 py-2 font-semibold">Simu</th>
-                  <th class="px-2 py-2 font-semibold">Aina</th>
                   <th class="px-2 py-2 font-semibold">Package</th>
-                  <th class="px-2 py-2 font-semibold">Site / Node</th>
+                  <th class="px-2 py-2 font-semibold">Matumizi</th>
+                  <th class="px-2 py-2 font-semibold">Site</th>
                   <th class="px-2 py-2 font-semibold">Hali</th>
                   <th class="px-2 py-2 font-semibold">Tarehe</th>
                 </tr>
@@ -138,23 +190,41 @@ interface SearchResult {
                   <tr class="border-b border-border/70 align-top">
                     <td class="px-2 py-3">
                       <p class="font-mono font-semibold text-signal">{{ v.username }}</p>
-                      <p class="text-xs text-[var(--text-secondary)]">
-                        MAC {{ v.mac_address || '—' }}
-                        @if (v.bound_device_name) {
-                          · {{ v.bound_device_name }}
-                        }
+                      <p class="text-xs capitalize text-[var(--text-secondary)]">
+                        {{ v.purchase_type }}
                       </p>
                     </td>
-                    <td class="px-2 py-3 font-mono text-ink">{{ v.phone_number }}</td>
-                    <td class="px-2 py-3 capitalize text-[var(--text-secondary)]">
-                      {{ v.purchase_type }}
+                    <td class="px-2 py-3">
+                      @if (v.source === 'agent') {
+                        <span class="font-semibold text-ink">Agent</span>
+                        <p class="text-xs text-[var(--text-secondary)]">
+                          {{ v.agent_name || v.agent_code || '—' }}
+                        </p>
+                      } @else {
+                        <span class="font-semibold text-signal">Portal</span>
+                        <p class="text-xs text-[var(--text-secondary)]">Amejinunulia</p>
+                      }
                     </td>
+                    <td class="px-2 py-3 font-mono text-ink">{{ v.phone_number }}</td>
                     <td class="px-2 py-3 text-ink">
                       {{ v.package_name }}
                       @if (v.payment.amount) {
                         <p class="text-xs text-[var(--text-secondary)]">
                           TZS {{ v.payment.amount }} · {{ v.payment.provider }}
                         </p>
+                      }
+                    </td>
+                    <td class="px-2 py-3">
+                      @if (v.is_used || v.mac_address) {
+                        <span class="font-semibold text-signal">Imetumika</span>
+                        <p class="mt-0.5 font-mono text-xs text-[var(--text-secondary)]">
+                          MAC: {{ v.mac_address || '—' }}
+                        </p>
+                        <p class="text-xs text-ink">
+                          Kifaa: {{ v.bound_device_name || 'Hakijulikani' }}
+                        </p>
+                      } @else {
+                        <span class="text-[var(--text-secondary)]">Haijatumika</span>
                       }
                     </td>
                     <td class="px-2 py-3 text-[var(--text-secondary)]">
@@ -180,8 +250,8 @@ interface SearchResult {
                   </tr>
                 } @empty {
                   <tr>
-                    <td colspan="7" class="px-2 py-8 text-[var(--text-secondary)]">
-                      Hakuna voucher zinazolingana.
+                    <td colspan="8" class="px-2 py-8 text-[var(--text-secondary)]">
+                      Hakuna voucher. Hakikisha unatazama filter sahihi (Portal vs Agents).
                     </td>
                   </tr>
                 }
@@ -193,7 +263,7 @@ interface SearchResult {
     </section>
   `,
 })
-export class AdminSupportComponent {
+export class AdminSupportComponent implements OnInit {
   private readonly api = inject(ApiClient);
 
   phone = '';
@@ -202,37 +272,78 @@ export class AdminSupportComponent {
   dateFrom = '';
   dateTo = '';
 
+  readonly source = signal<'all' | 'portal' | 'agent'>('portal');
   readonly loading = signal(false);
   readonly error = signal<string | null>(null);
   readonly searched = signal(false);
   readonly count = signal(0);
   readonly results = signal<VoucherRow[]>([]);
 
+  ngOnInit(): void {
+    this.loadRecent();
+  }
+
+  setSource(s: 'all' | 'portal' | 'agent'): void {
+    this.source.set(s);
+    this.loadRecent();
+  }
+
+  clearAndRecent(): void {
+    this.phone = '';
+    this.code = '';
+    this.mac = '';
+    this.dateFrom = '';
+    this.dateTo = '';
+    this.loadRecent();
+  }
+
   search(): void {
+    const hasFilter = !!(
+      this.phone.trim() ||
+      this.code.trim() ||
+      this.mac.trim() ||
+      this.dateFrom ||
+      this.dateTo
+    );
+    if (!hasFilter) {
+      this.loadRecent();
+      return;
+    }
+    this.fetch({
+      phone: this.phone.trim() || undefined,
+      code: this.code.trim() || undefined,
+      mac: this.mac.trim() || undefined,
+      purchased_from: this.dateFrom || undefined,
+      purchased_to: this.dateTo || undefined,
+      source: this.source() === 'all' ? undefined : this.source(),
+      page_size: 50,
+    });
+  }
+
+  private loadRecent(): void {
+    this.fetch({
+      recent: '1',
+      source: this.source() === 'all' ? undefined : this.source(),
+      page_size: 50,
+    });
+  }
+
+  private fetch(params: Record<string, string | number | undefined>): void {
     this.error.set(null);
     this.loading.set(true);
     this.searched.set(true);
-    this.api
-      .get<SearchResult>('/admin/vouchers/', {
-        phone: this.phone.trim() || undefined,
-        code: this.code.trim() || undefined,
-        mac: this.mac.trim() || undefined,
-        purchased_from: this.dateFrom || undefined,
-        purchased_to: this.dateTo || undefined,
-        page_size: 50,
-      })
-      .subscribe({
-        next: (data) => {
-          this.count.set(data.count);
-          this.results.set(data.results ?? []);
-          this.loading.set(false);
-        },
-        error: (err: unknown) => {
-          this.error.set(err instanceof AppError ? err.message : 'Hitilafu.');
-          this.results.set([]);
-          this.count.set(0);
-          this.loading.set(false);
-        },
-      });
+    this.api.get<SearchResult>('/admin/vouchers/', params).subscribe({
+      next: (data) => {
+        this.count.set(data.count);
+        this.results.set(data.results ?? []);
+        this.loading.set(false);
+      },
+      error: (err: unknown) => {
+        this.error.set(err instanceof AppError ? err.message : 'Hitilafu.');
+        this.results.set([]);
+        this.count.set(0);
+        this.loading.set(false);
+      },
+    });
   }
 }

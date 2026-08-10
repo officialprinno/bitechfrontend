@@ -56,7 +56,7 @@ import { AuthService } from '../../core/auth/auth.service';
               routerLinkActive="bg-signal-muted text-signal"
               class="block rounded-xl px-3 py-2.5 font-semibold text-[var(--text-secondary)] no-underline hover:bg-signal-muted/60"
             >
-              Support
+              Vouchers
             </a>
             <a
               routerLink="/admin/reports"

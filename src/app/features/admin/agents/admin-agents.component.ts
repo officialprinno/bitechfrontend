@@ -1,6 +1,6 @@
 import { DatePipe, DecimalPipe } from '@angular/common';
 import { Component, OnInit, inject, signal } from '@angular/core';
-import { FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
+import { FormArray, FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
 
 import { ApiClient } from '../../../core/api/api-client';
 import { AppError } from '../../../core/models/app-error';
@@ -111,6 +111,9 @@ interface VoucherRow {
   provisioning_status: string;
   settlement_status: string;
   is_unpaid: boolean;
+  is_used: boolean;
+  mac_address: string;
+  device_name: string;
   issued_at: string;
 }
 
@@ -264,7 +267,7 @@ interface VoucherRow {
         <div>
           <p class="font-display text-lg font-semibold text-ink">Tengeneza vouchers kwa agent</p>
           <p class="mt-1 text-sm text-[var(--text-secondary)]">
-            Admin pekee anatoa codes — chagua agent, node, package, idadi, na hali ya malipo
+            Kila package ina idadi yake — unaweza kutoa packages tofauti kwa agent mmoja
           </p>
         </div>
         <div class="grid gap-3 sm:grid-cols-2">
@@ -273,7 +276,6 @@ interface VoucherRow {
             <select
               formControlName="agent_id"
               class="mt-1 w-full rounded-xl border border-border bg-surface-0 px-3 py-2.5 text-ink"
-              (change)="onAgentChange()"
             >
               <option value="" disabled>Chagua agent</option>
               @for (a of activeAgents(); track a.id) {
@@ -281,12 +283,11 @@ interface VoucherRow {
               }
             </select>
           </label>
-          <label class="block text-sm">
+          <label class="block text-sm sm:col-span-2">
             <span class="text-[var(--text-secondary)]">Node</span>
             <select
               formControlName="node_id"
               class="mt-1 w-full rounded-xl border border-border bg-surface-0 px-3 py-2.5 text-ink"
-              (change)="onNodeChange()"
             >
               <option value="" disabled>Chagua node</option>
               @for (n of filteredNodes(); track n.id) {
@@ -296,30 +297,61 @@ interface VoucherRow {
               }
             </select>
           </label>
-          <label class="block text-sm">
-            <span class="text-[var(--text-secondary)]">Package</span>
-            <select
-              formControlName="package_id"
-              class="mt-1 w-full rounded-xl border border-border bg-surface-0 px-3 py-2.5 text-ink"
+        </div>
+
+        <div class="space-y-3" formArrayName="lines">
+          <div class="flex items-center justify-between gap-2">
+            <p class="text-sm font-semibold text-ink">Packages + idadi</p>
+            <button
+              type="button"
+              class="text-sm font-semibold text-signal hover:text-signal-hover"
+              (click)="addIssueLine()"
+              [disabled]="!issueForm.controls.node_id.value"
             >
-              <option value="" disabled>Chagua package</option>
-              @for (p of filteredPackages(); track p.id) {
-                <option [value]="p.id">
-                  {{ p.name }} — TZS {{ p.price_tzs | number: '1.0-0' }}
-                </option>
-              }
-            </select>
-          </label>
-          <label class="block text-sm">
-            <span class="text-[var(--text-secondary)]">Idadi</span>
-            <input
-              type="number"
-              min="1"
-              max="100"
-              formControlName="quantity"
-              class="mt-1 w-full rounded-xl border border-border bg-surface-0 px-3 py-2.5 text-ink"
-            />
-          </label>
+              + Ongeza package
+            </button>
+          </div>
+          @for (line of issueLines.controls; track line; let i = $index) {
+            <div
+              class="grid gap-3 rounded-2xl border border-border p-3 sm:grid-cols-[1fr_7rem_auto]"
+              [formGroupName]="i"
+            >
+              <label class="block text-sm">
+                <span class="text-[var(--text-secondary)]">Package</span>
+                <select
+                  formControlName="package_id"
+                  class="mt-1 w-full rounded-xl border border-border bg-surface-0 px-3 py-2.5 text-ink"
+                >
+                  <option value="" disabled>Chagua package</option>
+                  @for (p of availablePackagesForLine(i); track p.id) {
+                    <option [value]="p.id">
+                      {{ p.name }} — TZS {{ p.price_tzs | number: '1.0-0' }}
+                    </option>
+                  }
+                </select>
+              </label>
+              <label class="block text-sm">
+                <span class="text-[var(--text-secondary)]">Idadi</span>
+                <input
+                  type="number"
+                  min="1"
+                  max="100"
+                  formControlName="quantity"
+                  class="mt-1 w-full rounded-xl border border-border bg-surface-0 px-3 py-2.5 text-ink"
+                />
+              </label>
+              <div class="flex items-end pb-1">
+                <button
+                  type="button"
+                  class="text-sm font-semibold text-danger disabled:opacity-40"
+                  (click)="removeIssueLine(i)"
+                  [disabled]="issueLines.length <= 1"
+                >
+                  Ondoa
+                </button>
+              </div>
+            </div>
+          }
         </div>
 
         <fieldset class="space-y-2">
@@ -332,7 +364,7 @@ interface VoucherRow {
             <span>
               <span class="block font-semibold text-ink">Lipa vouchers zote sasa</span>
               <span class="mt-1 block text-sm text-[var(--text-secondary)]">
-                Batch inahesabiwa kama imelipwa.
+                Batches zote zinahesabiwa kama zimelipwa.
               </span>
             </span>
           </label>
@@ -361,31 +393,38 @@ interface VoucherRow {
             <span class="font-display text-lg font-bold text-signal">
               TZS {{ total | number: '1.0-0' }}
             </span>
+            <span class="ml-2 text-xs">({{ issueLines.length }} package{{ issueLines.length > 1 ? 's' : '' }})</span>
           </p>
         }
         @if (issueError()) {
           <app-error-state title="Hitilafu" [message]="issueError()!" />
         }
-        <app-button type="submit" [loading]="issuing()" [disabled]="issueForm.invalid">
+        <app-button type="submit" [loading]="issuing()" [disabled]="!canIssue()">
           Tengeneza vouchers
         </app-button>
       </form>
 
-      @if (issueResult(); as batch) {
-        <div class="rounded-2xl border border-success/30 bg-surface-1 p-5 shadow-soft">
-          <p class="font-display text-lg font-semibold text-success">Batch imeundwa</p>
-          <p class="mt-1 text-sm text-[var(--text-secondary)]">
-            {{ batch.agent_name }} · {{ batch.quantity }}× {{ batch.package_name_snapshot }} · TZS
-            {{ batch.total_amount | number: '1.0-0' }}
+      @if (issueResults(); as batches) {
+        <div class="space-y-3 rounded-2xl border border-success/30 bg-surface-1 p-5 shadow-soft">
+          <p class="font-display text-lg font-semibold text-success">
+            {{ batches.length }} batch{{ batches.length > 1 ? 'es' : '' }} zimeundwa
           </p>
-          <ul class="mt-4 divide-y divide-border font-mono text-sm">
-            @for (item of batch.items || []; track item.line_no) {
-              <li class="flex justify-between py-2">
-                <span class="text-signal">{{ item.voucher_code || '…' }}</span>
-                <span class="text-[var(--text-secondary)]">{{ item.provisioning_status }}</span>
-              </li>
-            }
-          </ul>
+          @for (batch of batches; track batch.id) {
+            <div class="border-t border-border pt-3 first:border-t-0 first:pt-0">
+              <p class="text-sm text-[var(--text-secondary)]">
+                {{ batch.quantity }}× {{ batch.package_name_snapshot }} · TZS
+                {{ batch.total_amount | number: '1.0-0' }}
+              </p>
+              <ul class="mt-2 divide-y divide-border font-mono text-sm">
+                @for (item of batch.items || []; track item.line_no) {
+                  <li class="flex justify-between py-1.5">
+                    <span class="text-signal">{{ item.voucher_code || '…' }}</span>
+                    <span class="text-[var(--text-secondary)]">{{ item.provisioning_status }}</span>
+                  </li>
+                }
+              </ul>
+            </div>
+          }
         </div>
       }
 
@@ -560,13 +599,14 @@ interface VoucherRow {
           <div
             class="mt-3 overflow-x-auto rounded-2xl border border-border bg-surface-1 shadow-soft"
           >
-            <table class="w-full min-w-[40rem] text-left text-sm">
+            <table class="w-full min-w-[52rem] text-left text-sm">
               <thead class="border-b border-border text-[var(--text-secondary)]">
                 <tr>
                   <th class="px-4 py-3 font-semibold">Voucher</th>
                   <th class="px-4 py-3 font-semibold">Agent</th>
                   <th class="px-4 py-3 font-semibold">Package</th>
                   <th class="px-4 py-3 font-semibold">Bei</th>
+                  <th class="px-4 py-3 font-semibold">Matumizi</th>
                   <th class="px-4 py-3 font-semibold">Hali</th>
                   <th class="px-4 py-3 font-semibold">Tarehe</th>
                 </tr>
@@ -589,6 +629,19 @@ interface VoucherRow {
                     <td class="px-4 py-3 text-ink">{{ v.package_name }}</td>
                     <td class="px-4 py-3 text-[var(--text-secondary)]">
                       TZS {{ v.amount | number: '1.0-0' }}
+                    </td>
+                    <td class="px-4 py-3">
+                      @if (v.is_used) {
+                        <span class="font-semibold text-signal">Imetumika</span>
+                        <p class="mt-0.5 font-mono text-xs text-[var(--text-secondary)]">
+                          MAC: {{ v.mac_address || '—' }}
+                        </p>
+                        <p class="text-xs text-ink">
+                          Kifaa: {{ v.device_name || 'Hakijulikani' }}
+                        </p>
+                      } @else {
+                        <span class="text-[var(--text-secondary)]">Haijatumika</span>
+                      }
                     </td>
                     <td class="px-4 py-3">
                       <span [class]="v.is_unpaid ? 'text-warning' : 'text-success'">
@@ -634,7 +687,7 @@ export class AdminAgentsComponent implements OnInit {
   readonly formError = signal<string | null>(null);
   readonly formOk = signal<string | null>(null);
   readonly issueError = signal<string | null>(null);
-  readonly issueResult = signal<BatchRow | null>(null);
+  readonly issueResults = signal<BatchRow[] | null>(null);
 
   readonly form = this.fb.nonNullable.group({
     display_name: ['', Validators.required],
@@ -650,28 +703,61 @@ export class AdminAgentsComponent implements OnInit {
   readonly issueForm = this.fb.nonNullable.group({
     agent_id: ['', Validators.required],
     node_id: ['', Validators.required],
-    package_id: ['', Validators.required],
-    quantity: [1, [Validators.required, Validators.min(1), Validators.max(100)]],
+    lines: this.fb.array([this.newIssueLine()]),
     settlement_mode: this.fb.nonNullable.control<'pay_all' | 'unpaid_recorded'>(
       'pay_all',
       Validators.required,
     ),
   });
 
+  get issueLines(): FormArray {
+    return this.issueForm.get('lines') as FormArray;
+  }
+
   ngOnInit(): void {
     this.api.get<SiteOpt[]>('/admin/sites/').subscribe({
       next: (data) => this.sites.set(Array.isArray(data) ? data : []),
     });
     this.api.get<NodeOpt[]>('/admin/nodes/', { page_size: 200 }).subscribe({
-      next: (data) => this.nodes.set(Array.isArray(data) ? data : []),
+      next: (data) =>
+        this.nodes.set(
+          (Array.isArray(data) ? data : []).map((n) => ({
+            ...n,
+            id: String(n.id),
+            site: String(n.site),
+          })),
+        ),
     });
     this.api.get<PackageOpt[]>('/admin/packages/', { page_size: 200 }).subscribe({
-      next: (data) => this.packages.set(Array.isArray(data) ? data : []),
+      next: (data) =>
+        this.packages.set(
+          (Array.isArray(data) ? data : []).map((p) => ({
+            ...p,
+            id: String(p.id),
+            site: String(p.site),
+            node: p.node == null || p.node === '' ? null : String(p.node),
+          })),
+        ),
     });
     this.reloadAgents();
     this.reloadBatches();
     this.reloadDebts();
     this.reloadVouchers();
+
+    // Reset package lines only when agent/node actually changes (not on every select event).
+    let prevAgent = this.issueForm.controls.agent_id.value;
+    let prevNode = this.issueForm.controls.node_id.value;
+    this.issueForm.controls.agent_id.valueChanges.subscribe((agentId) => {
+      if (agentId === prevAgent) return;
+      prevAgent = agentId;
+      this.issueForm.controls.node_id.setValue('', { emitEvent: true });
+      this.resetIssueLines();
+    });
+    this.issueForm.controls.node_id.valueChanges.subscribe((nodeId) => {
+      if (nodeId === prevNode) return;
+      prevNode = nodeId;
+      this.resetIssueLines();
+    });
   }
 
   setVoucherFilter(f: 'all' | 'unpaid'): void {
@@ -684,39 +770,87 @@ export class AdminAgentsComponent implements OnInit {
   }
 
   filteredNodes(): NodeOpt[] {
-    const agentId = this.issueForm.controls.agent_id.value;
+    const agentId = String(this.issueForm.controls.agent_id.value || '');
     const agent = this.agents().find((a) => a.id === agentId);
     if (!agent) return [];
-    return this.nodes().filter((n) => n.is_active && agent.site_ids.includes(n.site));
+    const siteIds = new Set(agent.site_ids.map(String));
+    return this.nodes().filter((n) => n.is_active && siteIds.has(String(n.site)));
   }
 
   filteredPackages(): PackageOpt[] {
-    const nodeId = this.issueForm.controls.node_id.value;
-    const node = this.nodes().find((n) => n.id === nodeId);
+    const nodeId = String(this.issueForm.controls.node_id.value || '');
+    const node = this.nodes().find((n) => String(n.id) === nodeId);
     if (!node) return [];
-    return this.packages().filter(
-      (p) =>
-        p.is_active &&
-        p.site === node.site &&
-        (p.node == null || p.node === '' || p.node === nodeId),
+    const siteId = String(node.site);
+    return this.packages().filter((p) => {
+      if (!p.is_active || String(p.site) !== siteId) return false;
+      if (p.node == null || p.node === '') return true;
+      return String(p.node) === nodeId;
+    });
+  }
+
+  /** Packages still available for a line (exclude ones already picked on other lines). */
+  availablePackagesForLine(lineIndex: number): PackageOpt[] {
+    const currentId = String(this.issueLines.at(lineIndex)?.get('package_id')?.value || '');
+    const selected = new Set(
+      this.issueLines.controls
+        .map((c, i) => (i === lineIndex ? '' : String(c.get('package_id')?.value || '')))
+        .filter(Boolean),
     );
+    return this.filteredPackages().filter((p) => !selected.has(p.id) || p.id === currentId);
+  }
+
+  newIssueLine() {
+    return this.fb.group({
+      package_id: ['', Validators.required],
+      quantity: [1, [Validators.required, Validators.min(1), Validators.max(100)]],
+    });
+  }
+
+  addIssueLine(): void {
+    if (this.issueLines.length >= this.filteredPackages().length) return;
+    this.issueLines.push(this.newIssueLine());
+  }
+
+  removeIssueLine(index: number): void {
+    if (this.issueLines.length <= 1) return;
+    this.issueLines.removeAt(index);
+  }
+
+  canIssue(): boolean {
+    if (this.issuing()) return false;
+    const agentId = String(this.issueForm.controls.agent_id.value || '');
+    const nodeId = String(this.issueForm.controls.node_id.value || '');
+    if (!agentId || !nodeId) return false;
+    if (!this.issueLines.length) return false;
+    const seen = new Set<string>();
+    for (const ctrl of this.issueLines.controls) {
+      const pkgId = String(ctrl.get('package_id')?.value || '');
+      const qty = Number(ctrl.get('quantity')?.value);
+      if (!pkgId || !Number.isFinite(qty) || qty < 1 || qty > 100) return false;
+      if (seen.has(pkgId)) return false;
+      seen.add(pkgId);
+    }
+    return true;
   }
 
   issueTotal(): number | null {
-    const pkgId = this.issueForm.controls.package_id.value;
-    const qty = this.issueForm.controls.quantity.value;
-    const pkg = this.packages().find((p) => p.id === pkgId);
-    if (!pkg || !qty) return null;
-    return Number(pkg.price_tzs) * qty;
+    let total = 0;
+    let any = false;
+    for (const ctrl of this.issueLines.controls) {
+      const pkgId = String(ctrl.get('package_id')?.value || '');
+      const qty = Number(ctrl.get('quantity')?.value || 0);
+      const pkg = this.packages().find((p) => p.id === pkgId);
+      if (!pkg || !qty) continue;
+      any = true;
+      total += Number(pkg.price_tzs) * qty;
+    }
+    return any ? total : null;
   }
 
-  onAgentChange(): void {
-    this.issueForm.controls.node_id.setValue('');
-    this.issueForm.controls.package_id.setValue('');
-  }
-
-  onNodeChange(): void {
-    this.issueForm.controls.package_id.setValue('');
+  private resetIssueLines(): void {
+    this.issueLines.clear();
+    this.issueLines.push(this.newIssueLine());
   }
 
   isSiteSelected(id: string): boolean {
@@ -776,28 +910,37 @@ export class AdminAgentsComponent implements OnInit {
   }
 
   issue(): void {
-    if (this.issueForm.invalid) return;
+    if (!this.canIssue()) {
+      this.issueError.set('Chagua agent, node, na kila package na idadi yake (1–100).');
+      return;
+    }
     this.issuing.set(true);
     this.issueError.set(null);
-    this.issueResult.set(null);
+    this.issueResults.set(null);
     const v = this.issueForm.getRawValue();
+    const lines = (v.lines as { package_id: string; quantity: number }[]).map((l) => ({
+      package_id: String(l.package_id),
+      quantity: Number(l.quantity),
+    }));
     this.api
-      .post<BatchRow>('/admin/agent-batches/', {
+      .post<{ count: number; batches: BatchRow[] }>('/admin/agent-batches/', {
         agent_id: v.agent_id,
         node_id: v.node_id,
-        package_id: v.package_id,
-        quantity: v.quantity,
         settlement_mode: v.settlement_mode,
+        lines,
       })
       .subscribe({
-        next: (batch) => {
-          this.issueResult.set(batch);
+        next: (res) => {
+          const batches = res.batches ?? [];
+          this.issueResults.set(batches);
           this.issuing.set(false);
           this.reloadBatches();
           this.reloadDebts();
           this.reloadVouchers();
           this.reloadAgents();
-          setTimeout(() => this.refreshIssued(batch.id), 1500);
+          for (const batch of batches) {
+            setTimeout(() => this.refreshIssued(batch.id), 1500);
+          }
         },
         error: (err: unknown) => {
           this.issueError.set(err instanceof AppError ? err.message : this.errMsg(err));
@@ -835,7 +978,10 @@ export class AdminAgentsComponent implements OnInit {
 
   private refreshIssued(id: string): void {
     this.api.get<BatchRow>(`/admin/agent-batches/${id}/`).subscribe({
-      next: (b) => this.issueResult.set(b),
+      next: (b) => {
+        const current = this.issueResults() ?? [];
+        this.issueResults.set(current.map((x) => (x.id === id ? b : x)));
+      },
     });
   }
 
@@ -843,7 +989,13 @@ export class AdminAgentsComponent implements OnInit {
     this.loading.set(true);
     this.api.get<AgentRow[]>('/admin/agents/').subscribe({
       next: (data) => {
-        this.agents.set(Array.isArray(data) ? data : []);
+        this.agents.set(
+          (Array.isArray(data) ? data : []).map((a) => ({
+            ...a,
+            id: String(a.id),
+            site_ids: (a.site_ids || []).map(String),
+          })),
+        );
         this.loading.set(false);
       },
       error: (err: unknown) => {

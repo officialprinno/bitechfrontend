@@ -21,6 +21,7 @@ export const appConfig: ApplicationConfig = {
       withInMemoryScrolling({ scrollPositionRestoration: 'enabled' }),
     ),
     provideHttpClient(
+      // apiError first (inner) so auth can react to AppError 401 after mapping
       withInterceptors([correlationIdInterceptor, authInterceptor, apiErrorInterceptor]),
     ),
   ],
