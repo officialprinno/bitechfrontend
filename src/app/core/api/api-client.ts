@@ -1,4 +1,4 @@
-import { HttpClient, HttpParams } from '@angular/common/http';
+import { HttpClient, HttpHeaders, HttpParams } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
 import { Observable, map } from 'rxjs';
 
@@ -12,9 +12,12 @@ export class ApiClient {
   private readonly http = inject(HttpClient);
   private readonly baseUrl = environment.apiBaseUrl.replace(/\/$/, '');
 
-  get<T>(path: string, params?: QueryParams): Observable<T> {
+  get<T>(path: string, params?: QueryParams, headers?: Record<string, string>): Observable<T> {
     return this.http
-      .get<ApiEnvelope<T>>(this.url(path), { params: this.toParams(params) })
+      .get<ApiEnvelope<T>>(this.url(path), {
+        params: this.toParams(params),
+        headers: headers ? new HttpHeaders(headers) : undefined,
+      })
       .pipe(map((envelope) => this.unwrap(envelope)));
   }
 

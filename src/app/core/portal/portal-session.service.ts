@@ -5,6 +5,8 @@ import { ApiClient } from '../api/api-client';
 import {
   PortalPackage,
   PortalNode,
+  PortalVoucherValidation,
+  PublicGiftNode,
   PortalSession,
   PortalSite,
   PurchaseType,
@@ -18,7 +20,9 @@ export interface RedirectParams {
   mac?: string;
   ip?: string;
   link_login?: string;
-  /** self | gift — browser self uses demo captive when backend allows it */
+  link_orig?: string;
+  hotspot_error?: string;
+  /** self | gift; self requires real MikroTik redirect context */
   intent?: PurchaseType;
 }
 
@@ -51,6 +55,8 @@ export class PortalSessionService {
         mac: params.mac || '',
         ip: params.ip || undefined,
         link_login: params.link_login || '',
+        link_orig: params.link_orig || '',
+        hotspot_error: params.hotspot_error || '',
         intent: params.intent || 'gift',
       })
       .pipe(tap((session) => this.persist(session)));
@@ -71,12 +77,18 @@ export class PortalSessionService {
       mac: current.mac || '',
       ip: current.ip || undefined,
       link_login: current.link_login || '',
+      link_orig: current.link_orig || '',
+      hotspot_error: '',
       intent: intent || this.purchaseTypeSignal() || 'gift',
     });
   }
 
   listSites(): Observable<PortalSite[]> {
     return this.api.get<PortalSite[]>('/portal/sites/');
+  }
+
+  listSiteNodes(siteSlug: string): Observable<PublicGiftNode[]> {
+    return this.api.get<PublicGiftNode[]>(`/portal/sites/${siteSlug}/nodes/`);
   }
 
   loadNodePackages(nodeIdentifier: string): Observable<{
@@ -92,6 +104,17 @@ export class PortalSessionService {
     packages: PortalPackage[];
   }> {
     return this.api.get(`/portal/sites/${siteSlug}/packages/`);
+  }
+
+  validateVoucher(code: string): Observable<PortalVoucherValidation> {
+    const session = this.sessionSignal();
+    if (!session?.session_token) {
+      throw new Error('Hakuna session ya WiFi.');
+    }
+    return this.api.post<PortalVoucherValidation, { session_token: string; code: string }>(
+      '/portal/vouchers/validate/',
+      { session_token: session.session_token, code },
+    );
   }
 
   selectPackage(pkg: PortalPackage | null): void {
@@ -114,9 +137,28 @@ export class PortalSessionService {
   }
 
   private persist(session: PortalSession): void {
-    sessionStorage.setItem(SESSION_KEY, JSON.stringify(session));
-    this.sessionSignal.set(session);
-    if (!session.can_purchase_self) {
+    const current = this.sessionSignal();
+    const sameNode = current?.node.node_identifier === session.node.node_identifier;
+    const captiveLink = session.link_login || (sameNode ? current?.link_login : '') || '';
+    const captiveMac = session.mac || (sameNode ? current?.mac : '') || '';
+    const originalDestination = session.link_orig || (sameNode ? current?.link_orig : '') || '';
+    const merged: PortalSession = {
+      ...session,
+      link_login: captiveLink,
+      mac: captiveMac,
+      link_orig: originalDestination,
+      hotspot_error: session.hotspot_error || '',
+      ip: session.ip || (sameNode ? current?.ip : null) || null,
+      can_purchase_self: session.can_purchase_self || !!captiveLink,
+      mode: captiveLink ? 'captive' : session.mode,
+    };
+
+    sessionStorage.setItem(SESSION_KEY, JSON.stringify(merged));
+    this.sessionSignal.set(merged);
+    if (!sameNode) {
+      this.selectedPackageSignal.set(null);
+    }
+    if (!merged.can_purchase_self) {
       this.purchaseTypeSignal.set('gift');
     } else {
       this.purchaseTypeSignal.set('self');

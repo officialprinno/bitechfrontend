@@ -72,7 +72,11 @@ const PROVIDERS: ProviderOption[] = [
               <span>
                 <span class="block font-semibold text-ink">Nunua kwa kifaa hiki</span>
                 <span class="mt-1 block text-sm text-[var(--text-secondary)]">
-                  Auto-login baada ya malipo.
+                  @if (session()?.mac) {
+                    MAC {{ session()!.mac }} itafungwa kwenye voucher mara baada ya malipo.
+                  } @else {
+                    Auto-login baada ya malipo; MAC itafungwa kifaa kikifanikiwa kuingia.
+                  }
                 </span>
               </span>
             </label>

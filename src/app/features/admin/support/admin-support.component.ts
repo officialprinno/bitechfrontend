@@ -23,6 +23,14 @@ interface VoucherRow {
   is_used: boolean;
   mac_address: string;
   bound_device_name: string;
+  is_online: boolean;
+  usage_status: string;
+  validity_started_at: string | null;
+  session_started_at: string | null;
+  session_last_seen_at: string | null;
+  session_uptime: string;
+  session_bps_in: number;
+  session_bps_out: number;
   purchased_at: string | null;
   expires_at: string | null;
   provisioning_status: string;
@@ -172,7 +180,7 @@ interface SearchResult {
           </p>
 
           <div class="mt-4 overflow-x-auto">
-            <table class="w-full min-w-[56rem] text-left text-sm">
+            <table class="w-full min-w-[82rem] text-left text-sm">
               <thead class="border-b border-border text-[var(--text-secondary)]">
                 <tr>
                   <th class="px-2 py-2 font-semibold">Code</th>
@@ -180,6 +188,8 @@ interface SearchResult {
                   <th class="px-2 py-2 font-semibold">Simu</th>
                   <th class="px-2 py-2 font-semibold">Package</th>
                   <th class="px-2 py-2 font-semibold">Matumizi</th>
+                  <th class="px-2 py-2 font-semibold">Session</th>
+                  <th class="px-2 py-2 font-semibold">Speed</th>
                   <th class="px-2 py-2 font-semibold">Site</th>
                   <th class="px-2 py-2 font-semibold">Hali</th>
                   <th class="px-2 py-2 font-semibold">Tarehe</th>
@@ -216,7 +226,13 @@ interface SearchResult {
                     </td>
                     <td class="px-2 py-3">
                       @if (v.is_used || v.mac_address) {
-                        <span class="font-semibold text-signal">Imetumika</span>
+                        <span
+                          class="font-semibold"
+                          [class.text-success]="v.is_online"
+                          [class.text-signal]="!v.is_online"
+                        >
+                          {{ v.is_online ? 'IN USE' : 'Imetumika' }}
+                        </span>
                         <p class="mt-0.5 font-mono text-xs text-[var(--text-secondary)]">
                           MAC: {{ v.mac_address || '—' }}
                         </p>
@@ -227,6 +243,28 @@ interface SearchResult {
                         <span class="text-[var(--text-secondary)]">Haijatumika</span>
                       }
                     </td>
+                    <td class="px-2 py-3 text-xs text-[var(--text-secondary)]">
+                      <p>
+                        Ilianza:
+                        {{ (v.validity_started_at || v.session_started_at) | date: 'medium' }}
+                      </p>
+                      <p>Inaisha: {{ v.expires_at ? (v.expires_at | date: 'medium') : '—' }}</p>
+                      @if (v.is_online) {
+                        <p class="mt-1 font-semibold text-success">
+                          Online {{ v.session_uptime || '' }}
+                        </p>
+                      } @else if (v.session_last_seen_at) {
+                        <p class="mt-1">Last seen: {{ v.session_last_seen_at | date: 'medium' }}</p>
+                      }
+                    </td>
+                    <td class="px-2 py-3 text-xs text-[var(--text-secondary)]">
+                      @if (v.is_online) {
+                        <p>↓ {{ formatSpeed(v.session_bps_out) }}</p>
+                        <p>↑ {{ formatSpeed(v.session_bps_in) }}</p>
+                      } @else {
+                        —
+                      }
+                    </td>
                     <td class="px-2 py-3 text-[var(--text-secondary)]">
                       {{ v.site_name }}
                       <p class="text-xs">{{ v.node_identifier }}</p>
@@ -234,14 +272,20 @@ interface SearchResult {
                     <td class="px-2 py-3">
                       <span
                         [class]="
-                          v.status === 'active'
+                          v.usage_status === 'active' || v.usage_status === 'in_use'
                             ? 'text-success'
-                            : v.status === 'expired' || v.status === 'failed'
+                            : v.usage_status === 'in_use_expired' || v.status === 'expired' || v.status === 'failed'
                               ? 'text-danger'
                               : 'text-signal'
                         "
                       >
-                        {{ v.status }}
+                        {{
+                          v.usage_status === 'in_use'
+                            ? 'IN USE'
+                            : v.usage_status === 'in_use_expired'
+                              ? 'IN USE · EXPIRED'
+                              : v.usage_status
+                        }}
                       </span>
                     </td>
                     <td class="px-2 py-3 text-xs text-[var(--text-secondary)]">
@@ -250,7 +294,7 @@ interface SearchResult {
                   </tr>
                 } @empty {
                   <tr>
-                    <td colspan="8" class="px-2 py-8 text-[var(--text-secondary)]">
+                    <td colspan="10" class="px-2 py-8 text-[var(--text-secondary)]">
                       Hakuna voucher. Hakikisha unatazama filter sahihi (Portal vs Agents).
                     </td>
                   </tr>
@@ -281,6 +325,13 @@ export class AdminSupportComponent implements OnInit {
 
   ngOnInit(): void {
     this.loadRecent();
+  }
+
+  formatSpeed(value: number): string {
+    const bps = Math.max(Number(value) || 0, 0);
+    if (bps >= 1_000_000) return `${(bps / 1_000_000).toFixed(2)} Mbps`;
+    if (bps >= 1_000) return `${(bps / 1_000).toFixed(1)} Kbps`;
+    return `${Math.round(bps)} bps`;
   }
 
   setSource(s: 'all' | 'portal' | 'agent'): void {

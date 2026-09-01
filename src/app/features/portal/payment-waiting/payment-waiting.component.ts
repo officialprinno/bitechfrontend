@@ -1,14 +1,17 @@
 import { Component, OnDestroy, OnInit, computed, inject, signal } from '@angular/core';
+import { Title } from '@angular/platform-browser';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { Subscription, switchMap, timer } from 'rxjs';
 
 import { environment } from '../../../../environments/environment';
 import { AppError } from '../../../core/models/app-error';
 import {
+  PaymentCheckoutSummary,
   PaymentDelivery,
   PaymentService,
   PaymentStatusResponse,
 } from '../../../core/payments/payment.service';
+import { HotspotLoginService } from '../../../core/portal/hotspot-login.service';
 import { ButtonComponent } from '../../../shared/ui/button/button.component';
 import { ErrorStateComponent } from '../../../shared/ui/error-state/error-state.component';
 import { SkeletonComponent } from '../../../shared/ui/skeleton/skeleton.component';
@@ -26,19 +29,67 @@ const STATUS_RANK: Record<string, number> = {
   imports: [ButtonComponent, ErrorStateComponent, SkeletonComponent, RouterLink],
   template: `
     <section class="space-y-6 text-center">
+      @if (copyMessage()) {
+        <div
+          class="fixed left-1/2 top-5 z-50 -translate-x-1/2 rounded-xl px-4 py-3 text-sm font-semibold text-white shadow-soft"
+          [class.bg-success]="!copyMessageIsError()"
+          [class.bg-danger]="copyMessageIsError()"
+          role="status"
+          aria-live="polite"
+          data-testid="copy-success-message"
+        >
+          {{ copyMessage() }}
+        </div>
+      }
+
       <div>
-        <h1 class="font-display text-2xl font-bold text-ink">{{ headline() }}</h1>
+        <div
+          class="mx-auto mb-3 inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs font-bold uppercase tracking-wider"
+          [class]="statusBadgeClass()"
+        >
+          <span class="h-2 w-2 rounded-full" [class]="statusDotClass()"></span>
+          {{ statusBadgeLabel() }}
+        </div>
+        <h1
+          class="font-display text-2xl font-bold transition-colors duration-300"
+          [class]="statusHeadingClass()"
+          aria-live="polite"
+          data-testid="payment-main-title"
+        >
+          {{ headline() }}
+        </h1>
         <p class="mt-2 text-sm text-[var(--text-secondary)]">{{ subline() }}</p>
       </div>
 
       @if (status(); as s) {
         <div class="rounded-2xl border border-border bg-surface-1 p-5 text-left shadow-soft">
-          <p class="text-sm text-[var(--text-secondary)]">{{ s.site_name }} · {{ s.package_name }}</p>
-          <p class="mt-1 font-display text-lg font-semibold text-ink">
-            {{ s.provider }} · {{ s.phone_number }}
-          </p>
-          <p class="mt-3 text-sm">
-            Hali:
+          <p class="text-sm text-[var(--text-secondary)]">{{ s.site_name }}</p>
+          <dl class="mt-3 grid grid-cols-2 gap-x-4 gap-y-3 text-sm">
+            <div>
+              <dt class="text-[var(--text-secondary)]">Kifurushi</dt>
+              <dd class="font-semibold text-ink">{{ s.package_name }}</dd>
+            </div>
+            <div>
+              <dt class="text-[var(--text-secondary)]">Kiasi cha kulipa</dt>
+              <dd class="font-semibold text-ink">
+                @if (checkoutSummary(); as summary) {
+                  {{ summary.currency }} {{ summary.amount }}
+                } @else {
+                  —
+                }
+              </dd>
+            </div>
+            <div>
+              <dt class="text-[var(--text-secondary)]">Namba ya malipo</dt>
+              <dd class="font-semibold text-ink">{{ checkoutSummary()?.phone_number || '—' }}</dd>
+            </div>
+            <div>
+              <dt class="text-[var(--text-secondary)]">Mtandao</dt>
+              <dd class="font-semibold text-ink">{{ s.provider }}</dd>
+            </div>
+          </dl>
+          <p class="mt-4 border-t border-border pt-3 text-sm">
+            Status ya malipo:
             <span class="font-semibold" [class]="statusClass(s.status)">{{ statusLabel(s.status) }}</span>
           </p>
         </div>
@@ -66,7 +117,7 @@ const STATUS_RANK: Record<string, number> = {
 
       @if (status()?.status === 'success') {
         <div class="rounded-2xl border border-success/30 bg-surface-1 p-5 text-left shadow-soft space-y-4">
-          <p class="font-display text-lg font-semibold text-success">Malipo yamefanikiwa</p>
+          <p class="font-display text-lg font-semibold text-success">Voucher yako</p>
 
           @if (delivery(); as d) {
             @if (d.provisioning_status === 'success' && d.username) {
@@ -74,27 +125,7 @@ const STATUS_RANK: Record<string, number> = {
                 <p class="text-sm text-[var(--text-secondary)]">{{ d.instructions }}</p>
               }
 
-              <!-- Self auto-login attempt -->
-              @if (d.can_auto_login && !showCodeFallback()) {
-                <div class="rounded-xl border border-border bg-surface-0/50 p-4">
-                  <p class="text-sm font-semibold text-ink">Inajaribu kukuunganisha…</p>
-                  <p class="mt-1 text-xs text-[var(--text-secondary)]">
-                    Ukirudi hapa, tumia code au bonyeza unganisha tena.
-                  </p>
-                  <div class="mt-4 flex flex-wrap gap-2">
-                    <app-button type="button" (click)="triggerAutoLogin()">
-                      Unganisha sasa
-                    </app-button>
-                    <app-button type="button" variant="secondary" (click)="revealCode()">
-                      Nionyeshe code
-                    </app-button>
-                  </div>
-                </div>
-              }
-
-              <!-- Gift primary / self fallback: show code -->
-              @if (!d.can_auto_login || showCodeFallback()) {
-                <div>
+              <div>
                   <p class="text-sm text-[var(--text-secondary)]">
                     @if (d.purchase_type === 'gift') {
                       Code ya kushiriki:
@@ -116,12 +147,34 @@ const STATUS_RANK: Record<string, number> = {
                     <app-button type="button" (click)="copyCode(d.username!)">
                       {{ copied() ? 'Imenakiliwa ✓' : 'Nakili code' }}
                     </app-button>
-                    @if (d.can_auto_login) {
-                      <app-button type="button" variant="secondary" (click)="triggerAutoLogin()">
-                        Unganisha sasa
-                      </app-button>
-                    }
                   </div>
+
+                  @if (d.purchase_type === 'self') {
+                    <div class="mt-5 rounded-xl border border-border bg-surface-0/50 p-4">
+                      <p class="text-sm font-semibold text-ink">Unataka kuunganisha vipi?</p>
+                      <div class="mt-3 flex flex-wrap gap-2">
+                        @if (d.can_auto_login) {
+                          <app-button type="button" (click)="triggerAutoLogin()">
+                            Unganisha automatic
+                          </app-button>
+                        }
+                        <app-button type="button" variant="secondary" (click)="chooseManual()">
+                          Ingiza manual
+                        </app-button>
+                      </div>
+                      @if (!d.can_auto_login) {
+                        <p class="mt-2 text-xs text-[var(--text-secondary)]">
+                          Automatic haipatikani kwenye connection hii; tumia manual.
+                        </p>
+                      }
+                      @if (manualSelected()) {
+                        <p class="mt-3 text-sm text-[var(--text-secondary)]">
+                          Fungua login ya Bitech WiFi, kisha tumia
+                          <strong class="text-ink">{{ d.username }}</strong> kama username na password.
+                        </p>
+                      }
+                    </div>
+                  }
 
                   @if (d.sms; as sms) {
                     @if (sms.enabled) {
@@ -139,8 +192,7 @@ const STATUS_RANK: Record<string, number> = {
                       </p>
                     }
                   }
-                </div>
-              }
+              </div>
             } @else if (d.provisioning_status === 'pending') {
               <p class="text-sm text-[var(--text-secondary)]">Voucher inaandaliwa…</p>
             } @else if (d.provisioning_status === 'failed') {
@@ -172,7 +224,9 @@ const STATUS_RANK: Record<string, number> = {
 export class PaymentWaitingComponent implements OnInit, OnDestroy {
   private readonly route = inject(ActivatedRoute);
   private readonly router = inject(Router);
+  private readonly pageTitle = inject(Title);
   private readonly payments = inject(PaymentService);
+  private readonly hotspotLogin = inject(HotspotLoginService);
 
   readonly loading = signal(true);
   readonly mocking = signal(false);
@@ -180,9 +234,11 @@ export class PaymentWaitingComponent implements OnInit, OnDestroy {
   readonly status = signal<PaymentStatusResponse | null>(null);
   readonly timedOut = signal(false);
   readonly mockMode = signal(false);
-  readonly showCodeFallback = signal(false);
   readonly copied = signal(false);
-  readonly autoLoginStarted = signal(false);
+  readonly copyMessage = signal<string | null>(null);
+  readonly copyMessageIsError = signal(false);
+  readonly manualSelected = signal(false);
+  readonly checkoutSummary = signal<PaymentCheckoutSummary | null>(null);
 
   readonly delivery = computed(() => {
     const d = this.status()?.delivery;
@@ -191,10 +247,41 @@ export class PaymentWaitingComponent implements OnInit, OnDestroy {
 
   readonly headline = computed(() => {
     const s = this.status()?.status;
-    if (s === 'success') return 'Malipo yamefanikiwa';
+    if (s === 'success') return 'Malipo yamekamilika!';
     if (s === 'failed') return 'Malipo yameshindikana';
     if (s === 'expired') return 'Muda wa malipo umeisha';
     return 'Inasubiri malipo…';
+  });
+
+  readonly statusBadgeLabel = computed(() => {
+    const status = this.status()?.status;
+    if (status === 'success') return 'Malipo yamepokelewa';
+    if (status === 'failed') return 'Malipo yamekataliwa';
+    if (status === 'expired') return 'Muda umeisha';
+    return 'Inathibitisha malipo';
+  });
+
+  readonly statusHeadingClass = computed(() => {
+    const status = this.status()?.status;
+    if (status === 'success') return 'text-success';
+    if (status === 'failed' || status === 'expired') return 'text-danger';
+    return 'text-warning';
+  });
+
+  readonly statusBadgeClass = computed(() => {
+    const status = this.status()?.status;
+    if (status === 'success') return 'border-success/30 bg-success/10 text-success';
+    if (status === 'failed' || status === 'expired') {
+      return 'border-danger/30 bg-danger/10 text-danger';
+    }
+    return 'border-warning/30 bg-warning/10 text-warning';
+  });
+
+  readonly statusDotClass = computed(() => {
+    const status = this.status()?.status;
+    if (status === 'success') return 'bg-success';
+    if (status === 'failed' || status === 'expired') return 'bg-danger';
+    return 'bg-warning animate-pulse';
   });
 
   readonly subline = computed(() => {
@@ -202,12 +289,9 @@ export class PaymentWaitingComponent implements OnInit, OnDestroy {
     if (s === 'success') {
       const d = this.delivery();
       if (d?.provisioning_status === 'success') {
-        if (d.can_auto_login && !this.showCodeFallback()) {
-          return 'Inajaribu kukuunganisha kwenye WiFi…';
-        }
         return d.purchase_type === 'gift'
           ? 'Shiriki code hapa chini.'
-          : 'Tumia code au unganisha kwenye WiFi.';
+          : 'Voucher yako iko tayari. Nakili code, kisha chagua namna ya kuunganisha.';
       }
       if (d?.provisioning_status === 'failed') {
         return 'Malipo yamepokelewa — voucher inahitaji support.';
@@ -219,14 +303,22 @@ export class PaymentWaitingComponent implements OnInit, OnDestroy {
   });
 
   private sub?: Subscription;
-  private fallbackTimer?: ReturnType<typeof setTimeout>;
+  private copyMessageTimer?: ReturnType<typeof setTimeout>;
   private paymentId = '';
 
   ngOnInit(): void {
     this.paymentId = this.route.snapshot.paramMap.get('paymentId') || '';
+    this.checkoutSummary.set(this.payments.getCheckoutSummary(this.paymentId));
     this.mockMode.set(this.route.snapshot.queryParamMap.get('mock') === '1');
     if (!this.paymentId) {
       void this.router.navigateByUrl('/');
+      return;
+    }
+    if (!this.payments.getPollToken(this.paymentId)) {
+      this.loading.set(false);
+      this.error.set(
+        'Kiungo hiki hakina ruhusa ya kuangalia malipo. Rudi checkout uanze tena.',
+      );
       return;
     }
 
@@ -240,7 +332,6 @@ export class PaymentWaitingComponent implements OnInit, OnDestroy {
         next: (res) => {
           this.loading.set(false);
           this.applyStatus(res);
-          this.maybeStartDelivery(this.status()?.delivery ?? null);
           if (this.isSettled(this.status())) {
             this.sub?.unsubscribe();
           } else if (Date.now() - started >= uxTimeout) {
@@ -257,21 +348,56 @@ export class PaymentWaitingComponent implements OnInit, OnDestroy {
 
   ngOnDestroy(): void {
     this.sub?.unsubscribe();
-    if (this.fallbackTimer) clearTimeout(this.fallbackTimer);
+    if (this.copyMessageTimer) clearTimeout(this.copyMessageTimer);
   }
 
-  revealCode(): void {
-    this.showCodeFallback.set(true);
+  chooseManual(): void {
+    this.manualSelected.set(true);
   }
 
   async copyCode(code: string): Promise<void> {
     try {
-      await navigator.clipboard.writeText(code);
+      await this.writeToClipboard(code);
       this.copied.set(true);
-      setTimeout(() => this.copied.set(false), 2000);
+      this.copyMessageIsError.set(false);
+      this.copyMessage.set('Umefanikiwa kunakili voucher.');
     } catch {
       this.copied.set(false);
+      this.copyMessageIsError.set(true);
+      this.copyMessage.set('Imeshindikana kunakili. Bonyeza code kwa muda kisha uchague Copy.');
     }
+    if (this.copyMessageTimer) clearTimeout(this.copyMessageTimer);
+    this.copyMessageTimer = setTimeout(() => {
+      this.copied.set(false);
+      this.copyMessage.set(null);
+      this.copyMessageIsError.set(false);
+    }, 3000);
+  }
+
+  private async writeToClipboard(value: string): Promise<void> {
+    if (navigator.clipboard && window.isSecureContext) {
+      try {
+        await navigator.clipboard.writeText(value);
+        return;
+      } catch {
+        // Captive portals commonly deny the modern Clipboard API; use the
+        // selection-based fallback below before reporting a real failure.
+      }
+    }
+
+    const textarea = document.createElement('textarea');
+    textarea.value = value;
+    textarea.setAttribute('readonly', '');
+    textarea.setAttribute('aria-hidden', 'true');
+    textarea.style.position = 'fixed';
+    textarea.style.left = '-9999px';
+    textarea.style.opacity = '0';
+    document.body.appendChild(textarea);
+    textarea.select();
+    textarea.setSelectionRange(0, textarea.value.length);
+    const copied = document.execCommand('copy');
+    textarea.remove();
+    if (!copied) throw new Error('Clipboard copy was rejected.');
   }
 
   triggerAutoLogin(): void {
@@ -288,7 +414,6 @@ export class PaymentWaitingComponent implements OnInit, OnDestroy {
         this.payments.status(this.paymentId).subscribe({
           next: (res) => {
             this.applyStatus(res);
-            this.maybeStartDelivery(res.delivery);
             if (this.isSettled(res)) {
               this.sub?.unsubscribe();
             }
@@ -315,72 +440,22 @@ export class PaymentWaitingComponent implements OnInit, OnDestroy {
     return 'text-warning';
   }
 
-  private maybeStartDelivery(d: PaymentDelivery | null): void {
-    if (!d || d.provisioning_status !== 'success' || !d.username) return;
-
-    // Gift: always show code (no auto-login)
-    if (!d.can_auto_login) {
-      this.showCodeFallback.set(true);
-      return;
-    }
-
-    // Self: attempt auto-login once, then reveal code as fallback
-    if (!this.autoLoginStarted()) {
-      this.autoLoginStarted.set(true);
-      // Short delay so user sees success UI before navigation
-      setTimeout(() => this.submitMikroTikLogin(d), 700);
-      this.fallbackTimer = setTimeout(() => this.showCodeFallback.set(true), 4500);
-    }
-  }
-
   /**
    * MikroTik captive login — POST form to link-login (FR-6).
    * Browsers may block cross-origin navigation quietly; code fallback covers that.
    */
   private submitMikroTikLogin(d: PaymentDelivery): void {
-    const action = (d.auto_login?.action || d.link_login || '').trim();
-    if (!action || !d.username) {
-      this.showCodeFallback.set(true);
+    if (!d.username || !this.hotspotLogin.canSubmit()) {
+      this.manualSelected.set(true);
       return;
     }
-
-    const method = (d.auto_login?.method || 'POST').toUpperCase();
-    const userField = d.auto_login?.username_field || 'username';
-    const passField = d.auto_login?.password_field || 'password';
-    const password = d.password || d.username;
-
-    if (method === 'GET') {
-      const url = new URL(action, window.location.origin);
-      url.searchParams.set(userField, d.username);
-      url.searchParams.set(passField, password);
-      window.location.href = url.toString();
-      return;
-    }
-
-    const form = document.createElement('form');
-    form.method = 'POST';
-    form.action = action;
-    form.style.display = 'none';
-    form.acceptCharset = 'UTF-8';
-
-    const u = document.createElement('input');
-    u.name = userField;
-    u.value = d.username;
-    form.appendChild(u);
-
-    const p = document.createElement('input');
-    p.name = passField;
-    p.value = password;
-    form.appendChild(p);
-
-    document.body.appendChild(form);
-    form.submit();
+    this.hotspotLogin.submitHotspotLogin(d.username, d.password || d.username);
   }
 
   private applyStatus(res: PaymentStatusResponse): void {
     const current = this.status();
     if (!current) {
-      this.status.set(res);
+      this.commitStatus(res);
       return;
     }
 
@@ -396,7 +471,31 @@ export class PaymentWaitingComponent implements OnInit, OnDestroy {
       if (curReady && !nextReady) return;
     }
 
-    this.status.set(res);
+    this.commitStatus(res);
+  }
+
+  private commitStatus(res: PaymentStatusResponse): void {
+    // Always publish a fresh immutable snapshot. Some response/interceptor paths
+    // can reuse and mutate an object reference; signal equality would then leave
+    // computed headline/badge/subline values cached at "pending" while direct
+    // template reads already show "success".
+    this.status.set({
+      ...res,
+      delivery: res.delivery ? { ...res.delivery } : null,
+    });
+    this.updatePageTitle(res.status);
+  }
+
+  private updatePageTitle(status: PaymentStatusResponse['status']): void {
+    const title =
+      status === 'success'
+        ? 'Malipo yamekamilika — Bitech WiFi'
+        : status === 'failed'
+          ? 'Malipo yameshindikana — Bitech WiFi'
+          : status === 'expired'
+            ? 'Muda wa malipo umeisha — Bitech WiFi'
+            : 'Inasubiri malipo — Bitech WiFi';
+    this.pageTitle.setTitle(title);
   }
 
   private isSettled(res: PaymentStatusResponse | null): boolean {

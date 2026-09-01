@@ -1,5 +1,5 @@
 import { Injectable, inject } from '@angular/core';
-import { Observable } from 'rxjs';
+import { Observable, tap } from 'rxjs';
 
 import { ApiClient } from '../api/api-client';
 import { PurchaseType } from '../models/portal.model';
@@ -16,7 +16,7 @@ export interface CheckoutRequest {
 
 export interface CheckoutResponse {
   payment_id: string;
-  external_id: string;
+  poll_token: string;
   status: string;
   provider: string;
   amount: string;
@@ -24,6 +24,13 @@ export interface CheckoutResponse {
   expires_at: string;
   poll_timeout_seconds: number;
   mock_mode: boolean;
+}
+
+export interface PaymentCheckoutSummary {
+  amount: string;
+  currency: string;
+  phone_number: string;
+  purchase_type: PurchaseType;
 }
 
 export interface AutoLoginForm {
@@ -58,17 +65,11 @@ export interface PaymentDelivery {
 
 export interface PaymentStatusResponse {
   payment_id: string;
-  external_id: string;
   status: 'pending' | 'success' | 'failed' | 'expired';
   provider: string;
-  amount: string;
-  currency: string;
-  purchase_type: PurchaseType;
-  phone_number: string;
   package_name: string;
   site_name: string;
   failure_reason: string;
-  expires_at: string;
   is_terminal: boolean;
   delivery: PaymentDelivery | null;
 }
@@ -78,11 +79,57 @@ export class PaymentService {
   private readonly api = inject(ApiClient);
 
   checkout(body: CheckoutRequest): Observable<CheckoutResponse> {
-    return this.api.post<CheckoutResponse, CheckoutRequest>('/payments/checkout/', body);
+    return this.api
+      .post<CheckoutResponse, CheckoutRequest>('/payments/checkout/', body)
+      .pipe(
+        tap((response) => {
+          this.storePollToken(response.payment_id, response.poll_token);
+          sessionStorage.setItem(
+            this.checkoutSummaryKey(response.payment_id),
+            JSON.stringify({
+              amount: response.amount,
+              currency: response.currency,
+              phone_number: body.phone_number,
+              purchase_type: body.purchase_type,
+            } satisfies PaymentCheckoutSummary),
+          );
+        }),
+      );
   }
 
   status(paymentId: string): Observable<PaymentStatusResponse> {
-    return this.api.get<PaymentStatusResponse>(`/payments/${paymentId}/`);
+    return this.api.get<PaymentStatusResponse>(`/payments/${paymentId}/`, undefined, {
+      'X-Payment-Poll-Token': this.getPollToken(paymentId) ?? '',
+    });
+  }
+
+  storePollToken(paymentId: string, pollToken: string): void {
+    sessionStorage.setItem(this.pollTokenKey(paymentId), pollToken);
+  }
+
+  getPollToken(paymentId: string): string | null {
+    return sessionStorage.getItem(this.pollTokenKey(paymentId));
+  }
+
+  getCheckoutSummary(paymentId: string): PaymentCheckoutSummary | null {
+    const raw = sessionStorage.getItem(this.checkoutSummaryKey(paymentId));
+    if (!raw) return null;
+    try {
+      const summary = JSON.parse(raw) as PaymentCheckoutSummary;
+      if (!summary.amount || !summary.currency || !summary.phone_number) return null;
+      if (summary.purchase_type !== 'self' && summary.purchase_type !== 'gift') return null;
+      return summary;
+    } catch {
+      return null;
+    }
+  }
+
+  private pollTokenKey(paymentId: string): string {
+    return `bitech_payment_poll_token:${paymentId}`;
+  }
+
+  private checkoutSummaryKey(paymentId: string): string {
+    return `bitech_payment_checkout_summary:${paymentId}`;
   }
 
   detectProvider(phone: string): Observable<{ phone_number: string; provider: string }> {

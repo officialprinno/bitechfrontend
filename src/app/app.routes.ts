@@ -22,6 +22,14 @@ export const routes: Routes = [
         title: 'Bitech WiFi',
       },
       {
+        path: 'login',
+        loadComponent: () =>
+          import('./features/portal/home/portal-home.component').then(
+            (m) => m.PortalHomeComponent,
+          ),
+        title: 'Ingia WiFi — Bitech WiFi',
+      },
+      {
         path: 'checkout',
         loadComponent: () =>
           import('./features/portal/checkout/portal-checkout.component').then(
