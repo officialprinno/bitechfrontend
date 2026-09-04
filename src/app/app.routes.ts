@@ -3,8 +3,7 @@ import { Routes } from '@angular/router';
 import {
   adminAuthGuard,
   agentAuthGuard,
-  guestAdminGuard,
-  guestAgentGuard,
+  guestAuthGuard,
 } from './core/auth/admin-auth.guard';
 import { PortalShellComponent } from './shared/layouts/portal-shell.component';
 
@@ -22,20 +21,20 @@ export const routes: Routes = [
         title: 'Bitech WiFi',
       },
       {
-        path: 'login',
-        loadComponent: () =>
-          import('./features/portal/home/portal-home.component').then(
-            (m) => m.PortalHomeComponent,
-          ),
-        title: 'Ingia WiFi — Bitech WiFi',
-      },
-      {
         path: 'checkout',
         loadComponent: () =>
           import('./features/portal/checkout/portal-checkout.component').then(
             (m) => m.PortalCheckoutComponent,
           ),
         title: 'Malipo — Bitech WiFi',
+      },
+      {
+        path: 'payment/result',
+        loadComponent: () =>
+          import('./features/portal/payment-waiting/payment-waiting.component').then(
+            (m) => m.PaymentWaitingComponent,
+          ),
+        title: 'Matokeo ya malipo — Bitech WiFi',
       },
       {
         path: 'pay/waiting/:paymentId',
@@ -56,12 +55,13 @@ export const routes: Routes = [
     ],
   },
   {
-    path: 'admin/login',
-    canActivate: [guestAdminGuard],
+    path: 'login',
+    canActivate: [guestAuthGuard],
     loadComponent: () =>
-      import('./features/auth/admin-login.component').then((m) => m.AdminLoginComponent),
-    title: 'Admin Login — Bitech',
+      import('./features/auth/unified-login.component').then((m) => m.UnifiedLoginComponent),
+    title: 'Sign In — BitechWiFi',
   },
+  { path: 'admin/login', redirectTo: 'login', pathMatch: 'full' },
   {
     path: 'admin',
     canActivate: [adminAuthGuard],
@@ -111,10 +111,26 @@ export const routes: Routes = [
       {
         path: 'reports',
         loadComponent: () =>
-          import('./features/admin/reports/admin-reports.component').then(
-            (m) => m.AdminReportsComponent,
+          import('./features/admin/reporting/reporting-center.component').then(
+            (m) => m.ReportingCenterComponent,
           ),
-        title: 'Mauzo — Admin',
+        title: 'Reports & Audit — Admin',
+      },
+      {
+        path: 'profile',
+        loadComponent: () =>
+          import('./features/admin/profile/admin-profile.component').then(
+            (m) => m.AdminProfileComponent,
+          ),
+        title: 'Profile — Admin',
+      },
+      {
+        path: 'operations',
+        loadComponent: () =>
+          import('./features/admin/operations/admin-operations.component').then(
+            (m) => m.AdminOperationsComponent,
+          ),
+        title: 'Payments & Operations — Admin',
       },
       {
         path: 'agents',
@@ -124,15 +140,24 @@ export const routes: Routes = [
           ),
         title: 'Agents — Admin',
       },
+      {
+        path: 'agents/:agentId',
+        loadComponent: () => import('./features/admin/agents/admin-agent-detail.component').then((m) => m.AdminAgentDetailComponent),
+        title: 'Agent Detail — Admin',
+      },
+      {
+        path: 'agent-batches',
+        loadComponent: () => import('./features/admin/agents/admin-agent-batches.component').then((m) => m.AdminAgentBatchesComponent),
+        title: 'Agent Batches — Admin',
+      },
+      {
+        path: 'agents/:agentId/batches/:batchId',
+        loadComponent: () => import('./features/admin/agents/admin-agent-detail.component').then((m) => m.AdminAgentDetailComponent),
+        title: 'Batch Detail — Admin',
+      },
     ],
   },
-  {
-    path: 'agent/login',
-    canActivate: [guestAgentGuard],
-    loadComponent: () =>
-      import('./features/auth/agent-login.component').then((m) => m.AgentLoginComponent),
-    title: 'Agent Login — Bitech',
-  },
+  { path: 'agent/login', redirectTo: 'login', pathMatch: 'full' },
   {
     path: 'agent',
     canActivate: [agentAuthGuard],
@@ -142,10 +167,18 @@ export const routes: Routes = [
       {
         path: '',
         loadComponent: () =>
+          import('./features/agent/dashboard/agent-dashboard.component').then(
+            (m) => m.AgentDashboardComponent,
+          ),
+        title: 'Agent — Bitech',
+      },
+      {
+        path: 'inventory',
+        loadComponent: () =>
           import('./features/agent/batches/agent-batches.component').then(
             (m) => m.AgentBatchesComponent,
           ),
-        title: 'Agent — Bitech',
+        title: 'Vouchers — Agent',
       },
       {
         path: 'batches/:id',

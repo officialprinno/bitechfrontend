@@ -1,8 +1,11 @@
 import { DatePipe, DecimalPipe } from '@angular/common';
-import { Component, OnInit, inject, signal } from '@angular/core';
+import { Component, OnInit, computed, inject, signal } from '@angular/core';
 import { FormArray, FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
+import { ActivatedRoute, RouterLink } from '@angular/router';
 
 import { ApiClient } from '../../../core/api/api-client';
+import { createIdempotencyKey } from '../../../core/api/idempotency-key';
+import { AuthService } from '../../../core/auth/auth.service';
 import { AppError } from '../../../core/models/app-error';
 import { ButtonComponent } from '../../../shared/ui/button/button.component';
 import { ErrorStateComponent } from '../../../shared/ui/error-state/error-state.component';
@@ -60,6 +63,8 @@ interface BatchItem {
 
 interface BatchRow {
   id: string;
+  issuance_request?: string | null;
+  agent: string;
   agent_code: string;
   agent_name: string;
   site_name: string;
@@ -71,6 +76,49 @@ interface BatchRow {
   total_amount: string;
   created_at: string;
   items?: BatchItem[];
+}
+
+interface PrintJob {
+  id: string;
+  print_number: number;
+  voucher_count: number;
+}
+
+interface PrintInfo {
+  eligibility: { total: number; eligible: number; excluded: number };
+  history: PrintJob[];
+}
+
+interface AssignmentRow {
+  id: string;
+  site: string;
+  site_name: string;
+  status: 'active' | 'suspended' | 'ended';
+  suspension_reason: string;
+  end_reason: string;
+  print_permission: {
+    enabled: boolean;
+    granted_by: string;
+    granted_at: string | null;
+    revoked_by: string;
+    revoked_at: string | null;
+  };
+}
+
+interface ReasonDialog {
+  eyebrow: string;
+  title: string;
+  description: string;
+  confirmLabel: string;
+  danger: boolean;
+  submit: (reason: string) => void;
+}
+
+interface IssuanceResponse {
+  id: string;
+  status: string;
+  summary: { requested: number; ready: number; pending: number; failed: number };
+  batches: BatchRow[];
 }
 
 interface DebtLedger {
@@ -127,14 +175,14 @@ interface VoucherRow {
     SkeletonComponent,
     DatePipe,
     DecimalPipe,
+    RouterLink,
   ],
   template: `
     <section class="space-y-8">
-      <div>
-        <h1 class="font-display text-2xl font-bold text-ink">Agents</h1>
-        <p class="mt-1 text-sm text-[var(--text-secondary)]">
-          Sajili agents, tengeneza vouchers, fuatilia deni zote na kila voucher + package.
-        </p>
+      <div class="flex flex-wrap items-end justify-between gap-3">
+        <div><h1 class="font-display text-2xl font-bold text-ink">Agents</h1>
+        <p class="mt-1 text-sm text-[var(--text-secondary)]">Chagua agent kuona batches zake, vouchers na kuchapisha PDF.</p></div>
+        <a routerLink="/admin/agent-batches" class="rounded-xl bg-signal px-4 py-2.5 text-sm font-semibold text-[var(--text-inverse)] no-underline">View Agent Batches & Print</a>
       </div>
 
       @if (debts(); as d) {
@@ -183,6 +231,7 @@ interface VoucherRow {
       }
 
       <!-- Register -->
+      @if (auth.isSuperAdmin()) {
       <form
         class="space-y-4 rounded-2xl border border-border bg-surface-1 p-5 shadow-soft"
         [formGroup]="form"
@@ -257,6 +306,7 @@ interface VoucherRow {
           Sajili agent
         </app-button>
       </form>
+      }
 
       <!-- Issue vouchers -->
       <form
@@ -400,29 +450,28 @@ interface VoucherRow {
           <app-error-state title="Hitilafu" [message]="issueError()!" />
         }
         <app-button type="submit" [loading]="issuing()" [disabled]="!canIssue()">
-          Tengeneza vouchers
+          {{ issuing() ? 'Inatengeneza batch, tafadhali subiri…' : 'Tengeneza vouchers' }}
         </app-button>
+        @if (issuing()) {<p class="text-xs text-[var(--text-secondary)]">Ombi limetumwa salama. Usibonyeze tena au kuondoka kwenye ukurasa.</p>}
       </form>
 
       @if (issueResults(); as batches) {
         <div class="space-y-3 rounded-2xl border border-success/30 bg-surface-1 p-5 shadow-soft">
           <p class="font-display text-lg font-semibold text-success">
-            {{ batches.length }} batch{{ batches.length > 1 ? 'es' : '' }} zimeundwa
+            Batch moja imeundwa · {{ batches.length }} package{{ batches.length > 1 ? 's' : '' }}
           </p>
+          @if (issuanceSummary(); as summary) {
+            <p class="text-sm text-[var(--text-secondary)]">
+              Tayari {{ summary.ready }}/{{ summary.requested }} · Inasubiri {{ summary.pending }} · Imeshindwa {{ summary.failed }}
+            </p>
+          }
           @for (batch of batches; track batch.id) {
             <div class="border-t border-border pt-3 first:border-t-0 first:pt-0">
               <p class="text-sm text-[var(--text-secondary)]">
                 {{ batch.quantity }}× {{ batch.package_name_snapshot }} · TZS
                 {{ batch.total_amount | number: '1.0-0' }}
               </p>
-              <ul class="mt-2 divide-y divide-border font-mono text-sm">
-                @for (item of batch.items || []; track item.line_no) {
-                  <li class="flex justify-between py-1.5">
-                    <span class="text-signal">{{ item.voucher_code || '…' }}</span>
-                    <span class="text-[var(--text-secondary)]">{{ item.provisioning_status }}</span>
-                  </li>
-                }
-              </ul>
+              <p class="mt-1 text-xs font-semibold" [class]="packageHasFailure(batch) ? 'text-danger' : 'text-warning'">{{ packageProgress(batch) }}</p>
             </div>
           }
         </div>
@@ -434,7 +483,7 @@ interface VoucherRow {
       } @else if (listError()) {
         <app-error-state title="Hitilafu" [message]="listError()!" />
       } @else {
-        <div class="overflow-hidden rounded-2xl border border-border bg-surface-1 shadow-soft">
+        <div id="agent-directory" class="scroll-mt-6 overflow-hidden rounded-2xl border border-border bg-surface-1 shadow-soft">
           <table class="w-full text-left text-sm">
             <thead class="border-b border-border text-[var(--text-secondary)]">
               <tr>
@@ -449,7 +498,7 @@ interface VoucherRow {
               @for (a of agents(); track a.id) {
                 <tr class="border-b border-border/70">
                   <td class="px-4 py-3">
-                    <p class="font-semibold text-ink">{{ a.display_name }}</p>
+                    <a [routerLink]="['/admin/agent-batches']" [queryParams]="{ agent: a.id }" class="font-semibold text-signal no-underline hover:text-signal-hover">{{ a.display_name }}</a>
                     <p class="mt-0.5 font-mono text-xs text-[var(--text-secondary)]">
                       {{ a.agent_code }} · {{ a.username }}
                     </p>
@@ -475,6 +524,17 @@ interface VoucherRow {
                     </span>
                   </td>
                   <td class="px-4 py-3 text-right">
+                    <a
+                      [routerLink]="['/admin/agent-batches']"
+                      [queryParams]="{ agent: a.id }"
+                      class="mr-3 inline-flex rounded-lg bg-signal px-3 py-2 text-xs font-semibold text-[var(--text-inverse)] no-underline"
+                    >View Batches & Print</a>
+                    <button
+                      type="button"
+                      class="mr-3 text-sm font-semibold text-signal hover:text-signal-hover"
+                      (click)="loadAssignments(a)"
+                    >Assignments</button>
+                    @if (auth.isSuperAdmin()) {
                     <button
                       type="button"
                       class="text-sm font-semibold text-signal hover:text-signal-hover"
@@ -483,6 +543,7 @@ interface VoucherRow {
                     >
                       {{ a.is_active ? 'Zima' : 'Washa' }}
                     </button>
+                    }
                   </td>
                 </tr>
               } @empty {
@@ -497,47 +558,85 @@ interface VoucherRow {
         </div>
       }
 
+      @if (assignmentAgent(); as agent) {
+        <div class="rounded-2xl border border-border bg-surface-1 p-5 shadow-soft">
+          <div class="flex flex-wrap items-center justify-between gap-3">
+            <h2 class="font-display text-lg font-semibold">Assignments · {{ agent.display_name }}</h2>
+            @if (auth.user()?.role !== 'support') {
+              <div class="flex gap-2">
+                <select #assignmentSite class="rounded-lg border border-border bg-surface-1 px-3 py-2 text-sm">
+                  @for (site of sites(); track site.id) { <option [value]="site.id">{{ site.name }}</option> }
+                </select>
+                <button type="button" class="font-semibold text-signal" (click)="addAssignment(agent, assignmentSite.value)">Add to site</button>
+              </div>
+            }
+          </div>
+          <div class="mt-3 space-y-2">
+            @for (assignment of assignments(); track assignment.id) {
+              <div class="flex flex-wrap items-center justify-between rounded-lg border border-border p-3 text-sm">
+                <span>
+                  {{ assignment.site_name }} · <strong>{{ assignment.status }}</strong>
+                  <span [class]="assignment.print_permission.enabled ? 'ml-2 text-success' : 'ml-2 text-warning'">
+                    Agent PDF Self-Service {{ assignment.print_permission.enabled ? 'ENABLED' : 'DISABLED' }}
+                  </span>
+                  @if (assignment.print_permission.granted_at) {
+                    <small class="mt-1 block text-[var(--text-secondary)]">
+                      Granted by {{ assignment.print_permission.granted_by }} · {{ assignment.print_permission.granted_at | date: 'short' }}
+                    </small>
+                  }
+                </span>
+                @if (auth.user()?.role !== 'support') {
+                  <span class="space-x-3">
+                    @if (assignment.status !== 'ended') {
+                      <button type="button" [class]="assignment.print_permission.enabled ? 'text-warning' : 'text-success'" (click)="setPrintPermission(agent, assignment, !assignment.print_permission.enabled)">
+                        {{ assignment.print_permission.enabled ? 'Disable Agent PDF Printing' : 'Enable Agent PDF Printing' }}
+                      </button>
+                    }
+                    @if (assignment.status === 'active') {
+                      <button type="button" class="text-warning" (click)="assignmentAction(assignment, 'suspend')">Suspend</button>
+                    } @else if (assignment.status === 'suspended') {
+                      <button type="button" class="text-success" (click)="assignmentAction(assignment, 'reactivate')">Reactivate</button>
+                    }
+                    @if (assignment.status !== 'ended') {
+                      <button type="button" class="text-danger" (click)="assignmentAction(assignment, 'end')">End</button>
+                    }
+                  </span>
+                }
+              </div>
+            }
+          </div>
+        </div>
+      }
+
       <!-- Batches -->
       <div>
         <h2 class="font-display text-lg font-semibold text-ink">Batches za agents</h2>
         <p class="mt-1 text-sm text-[var(--text-secondary)]">
           Settle deni kwa batch — au angalia vouchers moja moja chini
         </p>
+        <label class="mt-3 block w-full text-xs font-semibold text-[var(--text-secondary)] sm:w-80">Search batches<input type="search" [value]="batchSearch()" (input)="updateBatchSearch($event)" placeholder="Agent, batch, site au package" class="mt-1 block w-full rounded-xl border border-border bg-surface-1 px-3 py-2 text-sm text-ink"></label>
         @if (batchesLoading()) {
           <app-skeleton height="6rem" class="mt-3" />
         } @else if (!batches().length) {
           <p class="mt-3 text-sm text-[var(--text-secondary)]">Hakuna batches.</p>
         } @else {
           <ul class="mt-3 divide-y divide-border rounded-2xl border border-border bg-surface-1">
-            @for (b of batches(); track b.id) {
-              <li class="flex flex-wrap items-center justify-between gap-3 px-4 py-3 text-sm">
+            @for (group of pagedBatches(); track group.id) {
+              <li class="px-4 py-4 text-sm">
+                <div class="mb-3 flex flex-wrap items-center justify-between gap-3"><div><p class="font-display font-bold text-ink">Batch {{ group.id.slice(0, 8).toUpperCase() }}</p><p class="text-xs text-[var(--text-secondary)]">{{ group.agentName }} · {{ group.siteName }} · {{ group.totalQuantity }} vouchers · {{ group.createdAt | date:'short' }}</p></div><span class="font-semibold text-signal">TZS {{ group.totalAmount | number:'1.0-0' }}</span></div>
+                <div class="space-y-2">
+                @for (b of group.lines; track b.id) {
+                <div class="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border p-3">
                 <div>
                   <p class="font-semibold text-ink">
-                    {{ b.agent_name }}
-                    <span class="font-mono text-xs text-[var(--text-secondary)]"
-                      >({{ b.agent_code }})</span
-                    >
+                    {{ b.package_name_snapshot }}
                   </p>
                   <p class="text-xs text-[var(--text-secondary)]">
-                    {{ b.site_name }} · {{ b.quantity }}× {{ b.package_name_snapshot }} ·
-                    {{ b.created_at | date: 'short' }}
+                    {{ b.quantity }} vouchers
                   </p>
                 </div>
                 <div class="flex items-center gap-3">
-                  <div class="text-right">
-                    <p class="font-semibold text-signal">
-                      TZS {{ b.total_amount | number: '1.0-0' }}
-                    </p>
-                    <p class="text-xs text-[var(--text-secondary)]">
-                      {{
-                        b.settlement_status === 'unpaid'
-                          ? 'Haijalipwa'
-                          : b.settlement_mode === 'pay_all'
-                            ? 'Lipa zote'
-                            : 'Imelipwa'
-                      }}
-                    </p>
-                  </div>
+                  <a [routerLink]="['/admin/agents', b.agent, 'batches', b.id]" class="rounded-xl border border-border px-3 py-2 text-xs font-semibold text-signal no-underline">View vouchers</a>
                   @if (b.settlement_status === 'unpaid') {
                     <button
                       type="button"
@@ -548,10 +647,29 @@ interface VoucherRow {
                       Settle
                     </button>
                   }
+                  <button
+                    type="button"
+                    class="rounded-xl border border-border px-3 py-2 text-xs font-semibold text-signal disabled:opacity-60"
+                    [disabled]="printingId() === b.id"
+                    (click)="printBatch(b)"
+                  >
+                    Print PDF
+                  </button>
+                </div>
+                </div>
+                }
                 </div>
               </li>
             }
           </ul>
+          <div class="mt-3 flex flex-wrap items-center justify-between gap-3 text-sm">
+            <p class="font-medium text-[var(--text-secondary)]">Inaonyesha {{ batchRangeStart() }}-{{ batchRangeEnd() }} kati ya batches {{ filteredBatches().length }}</p>
+            <div class="flex items-center gap-2">
+              <button type="button" class="rounded-lg border border-border px-3 py-2 font-semibold text-ink disabled:cursor-not-allowed disabled:opacity-40" [disabled]="batchPage() === 1" (click)="changeBatchPage(-1)">Previous</button>
+              <span class="min-w-24 text-center font-semibold text-ink">Page {{ batchPage() }} / {{ batchPageCount() }}</span>
+              <button type="button" class="rounded-lg border border-border px-3 py-2 font-semibold text-ink disabled:cursor-not-allowed disabled:opacity-40" [disabled]="batchPage() === batchPageCount()" (click)="changeBatchPage(1)">Next</button>
+            </div>
+          </div>
         }
       </div>
 
@@ -591,6 +709,7 @@ interface VoucherRow {
             </button>
           </div>
         </div>
+        <label class="mt-3 block w-full text-xs font-semibold text-[var(--text-secondary)] sm:w-80">Search vouchers<input type="search" [value]="voucherSearch()" (input)="updateVoucherSearch($event)" placeholder="Voucher, agent, site au package" class="mt-1 block w-full rounded-xl border border-border bg-surface-1 px-3 py-2 text-sm text-ink"></label>
         @if (vouchersLoading()) {
           <app-skeleton height="8rem" class="mt-3" />
         } @else if (!vouchers().length) {
@@ -612,7 +731,7 @@ interface VoucherRow {
                 </tr>
               </thead>
               <tbody>
-                @for (v of vouchers(); track v.id) {
+                @for (v of pagedVouchers(); track v.id) {
                   <tr class="border-b border-border/70">
                     <td class="px-4 py-3 font-mono font-semibold text-signal">
                       {{ v.voucher_code || 'pending…' }}
@@ -659,23 +778,96 @@ interface VoucherRow {
               </tbody>
             </table>
           </div>
+          <div class="mt-3 flex flex-wrap items-center justify-between gap-3 text-sm">
+            <p class="font-medium text-[var(--text-secondary)]">Inaonyesha {{ voucherRangeStart() }}-{{ voucherRangeEnd() }} kati ya vouchers {{ filteredVouchers().length }}</p>
+            <div class="flex items-center gap-2">
+              <button type="button" class="rounded-lg border border-border px-3 py-2 font-semibold text-ink disabled:cursor-not-allowed disabled:opacity-40" [disabled]="voucherPage() === 1" (click)="changeVoucherPage(-1)">Previous</button>
+              <span class="min-w-24 text-center font-semibold text-ink">Page {{ voucherPage() }} / {{ voucherPageCount() }}</span>
+              <button type="button" class="rounded-lg border border-border px-3 py-2 font-semibold text-ink disabled:cursor-not-allowed disabled:opacity-40" [disabled]="voucherPage() === voucherPageCount()" (click)="changeVoucherPage(1)">Next</button>
+            </div>
+          </div>
         }
       </div>
+      @if (agentStatusFilter()) {<div class="flex items-center gap-3 rounded-xl border border-signal/30 bg-signal-muted px-4 py-2 text-sm">Agent status: <strong>{{ agentStatusFilter() }}</strong><a routerLink="/admin/agents" class="text-signal underline">Clear filter</a></div>}
+
+      @if (reasonDialog(); as dialog) {
+        <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4 py-8 backdrop-blur-sm" (click)="closeReasonDialog()">
+          <div role="dialog" aria-modal="true" aria-labelledby="reason-dialog-title" class="w-full max-w-lg rounded-2xl border border-border bg-surface-1 p-6 shadow-2xl" (click)="$event.stopPropagation()">
+            <div class="flex items-start gap-4">
+              <div [class]="dialog.danger ? 'flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-danger/15 text-danger' : 'flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-signal-muted text-signal'">
+                <span class="text-xl" aria-hidden="true">{{ dialog.danger ? '!' : '✓' }}</span>
+              </div>
+              <div>
+                <p class="text-xs font-bold uppercase tracking-[0.14em] text-signal">{{ dialog.eyebrow }}</p>
+                <h2 id="reason-dialog-title" class="mt-1 font-display text-xl font-bold text-ink">{{ dialog.title }}</h2>
+                <p class="mt-2 text-sm leading-6 text-[var(--text-secondary)]">{{ dialog.description }}</p>
+              </div>
+            </div>
+            <label class="mt-5 block">
+              <span class="text-sm font-semibold text-ink">Reason <span class="text-danger">*</span></span>
+              <textarea rows="4" maxlength="255" [value]="reasonText()" (input)="updateReason($event)" class="mt-2 w-full resize-none rounded-xl border border-border bg-surface-0 px-4 py-3 text-sm text-ink placeholder:text-[var(--text-secondary)] focus:border-signal" placeholder="Eleza sababu kwa ufupi kwa ajili ya audit trail"></textarea>
+              <span class="mt-1 flex justify-between text-xs text-[var(--text-secondary)]"><span>{{ reasonError() || 'Minimum characters: 3' }}</span><span>{{ reasonText().length }}/255</span></span>
+            </label>
+            <div class="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+              <button type="button" class="rounded-xl border border-border px-4 py-2.5 font-semibold text-ink hover:bg-surface-2" [disabled]="reasonBusy()" (click)="closeReasonDialog()">Cancel</button>
+              <button type="button" [class]="dialog.danger ? 'rounded-xl bg-danger px-4 py-2.5 font-semibold text-white disabled:opacity-60' : 'rounded-xl bg-signal px-4 py-2.5 font-semibold text-[var(--text-inverse)] disabled:opacity-60'" [disabled]="reasonBusy()" (click)="confirmReasonDialog()">{{ reasonBusy() ? 'Saving…' : dialog.confirmLabel }}</button>
+            </div>
+          </div>
+        </div>
+      }
     </section>
   `,
 })
 export class AdminAgentsComponent implements OnInit {
   private readonly api = inject(ApiClient);
+  readonly auth = inject(AuthService);
   private readonly fb = inject(FormBuilder);
+  private readonly route = inject(ActivatedRoute);
 
   readonly sites = signal<SiteOpt[]>([]);
   readonly nodes = signal<NodeOpt[]>([]);
   readonly packages = signal<PackageOpt[]>([]);
   readonly agents = signal<AgentRow[]>([]);
+  readonly agentStatusFilter = signal('');
   readonly batches = signal<BatchRow[]>([]);
+  readonly groupedBatches = computed(() => {
+    const groups = new Map<string, BatchRow[]>();
+    for (const batch of this.batches()) { const key=batch.issuance_request || batch.id; groups.set(key,[...(groups.get(key)||[]),batch]); }
+    return [...groups.entries()].map(([id,lines])=>({id,lines,agentName:lines[0].agent_name,siteName:lines[0].site_name,createdAt:lines[0].created_at,totalQuantity:lines.reduce((n,x)=>n+x.quantity,0),totalAmount:lines.reduce((n,x)=>n+Number(x.total_amount),0)}));
+  });
+  readonly batchSearch = signal('');
+  readonly filteredBatches = computed(() => {
+    const term = this.batchSearch().trim().toLowerCase();
+    if (!term) return this.groupedBatches();
+    return this.groupedBatches().filter((group) =>
+      [group.id, group.agentName, group.siteName, ...group.lines.flatMap((line) => [line.package_name_snapshot, line.node_identifier])]
+        .some((value) => String(value || '').toLowerCase().includes(term)),
+    );
+  });
+  readonly batchPage = signal(1);
+  readonly batchPageSize = 5;
+  readonly batchPageCount = computed(() => Math.max(1, Math.ceil(this.filteredBatches().length / this.batchPageSize)));
+  readonly pagedBatches = computed(() => this.filteredBatches().slice((this.batchPage() - 1) * this.batchPageSize, this.batchPage() * this.batchPageSize));
+  readonly batchRangeStart = computed(() => this.filteredBatches().length ? (this.batchPage() - 1) * this.batchPageSize + 1 : 0);
+  readonly batchRangeEnd = computed(() => Math.min(this.batchPage() * this.batchPageSize, this.filteredBatches().length));
   readonly debts = signal<DebtLedger | null>(null);
   readonly vouchers = signal<VoucherRow[]>([]);
   readonly voucherFilter = signal<'all' | 'unpaid'>('all');
+  readonly voucherSearch = signal('');
+  readonly filteredVouchers = computed(() => {
+    const term = this.voucherSearch().trim().toLowerCase();
+    if (!term) return this.vouchers();
+    return this.vouchers().filter((voucher) =>
+      [voucher.voucher_code, voucher.agent_name, voucher.agent_code, voucher.package_name, voucher.site_name, voucher.provisioning_status]
+        .some((value) => String(value || '').toLowerCase().includes(term)),
+    );
+  });
+  readonly voucherPage = signal(1);
+  readonly voucherPageSize = 10;
+  readonly voucherPageCount = computed(() => Math.max(1, Math.ceil(this.filteredVouchers().length / this.voucherPageSize)));
+  readonly pagedVouchers = computed(() => this.filteredVouchers().slice((this.voucherPage() - 1) * this.voucherPageSize, this.voucherPage() * this.voucherPageSize));
+  readonly voucherRangeStart = computed(() => this.filteredVouchers().length ? (this.voucherPage() - 1) * this.voucherPageSize + 1 : 0);
+  readonly voucherRangeEnd = computed(() => Math.min(this.voucherPage() * this.voucherPageSize, this.filteredVouchers().length));
   readonly loading = signal(true);
   readonly batchesLoading = signal(true);
   readonly vouchersLoading = signal(true);
@@ -688,6 +880,16 @@ export class AdminAgentsComponent implements OnInit {
   readonly formOk = signal<string | null>(null);
   readonly issueError = signal<string | null>(null);
   readonly issueResults = signal<BatchRow[] | null>(null);
+  readonly printingId = signal<string | null>(null);
+  readonly assignmentAgent = signal<AgentRow | null>(null);
+  readonly assignments = signal<AssignmentRow[]>([]);
+  readonly reasonDialog = signal<ReasonDialog | null>(null);
+  readonly reasonText = signal('');
+  readonly reasonError = signal<string | null>(null);
+  readonly reasonBusy = signal(false);
+  readonly issuanceSummary = signal<IssuanceResponse['summary'] | null>(null);
+  private issuanceKey: string | null = null;
+  private issuanceId: string | null = null;
 
   readonly form = this.fb.nonNullable.group({
     display_name: ['', Validators.required],
@@ -739,7 +941,7 @@ export class AdminAgentsComponent implements OnInit {
           })),
         ),
     });
-    this.reloadAgents();
+    this.route.queryParamMap.subscribe(params => { this.agentStatusFilter.set(params.get('status') || ''); this.reloadAgents(); });
     this.reloadBatches();
     this.reloadDebts();
     this.reloadVouchers();
@@ -762,7 +964,26 @@ export class AdminAgentsComponent implements OnInit {
 
   setVoucherFilter(f: 'all' | 'unpaid'): void {
     this.voucherFilter.set(f);
+    this.voucherPage.set(1);
     this.reloadVouchers();
+  }
+
+  changeBatchPage(offset: number): void {
+    this.batchPage.update((page) => Math.min(this.batchPageCount(), Math.max(1, page + offset)));
+  }
+
+  updateBatchSearch(event: Event): void {
+    this.batchSearch.set((event.target as HTMLInputElement).value);
+    this.batchPage.set(1);
+  }
+
+  updateVoucherSearch(event: Event): void {
+    this.voucherSearch.set((event.target as HTMLInputElement).value);
+    this.voucherPage.set(1);
+  }
+
+  changeVoucherPage(offset: number): void {
+    this.voucherPage.update((page) => Math.min(this.voucherPageCount(), Math.max(1, page + offset)));
   }
 
   activeAgents(): AgentRow[] {
@@ -917,30 +1138,33 @@ export class AdminAgentsComponent implements OnInit {
     this.issuing.set(true);
     this.issueError.set(null);
     this.issueResults.set(null);
+    this.issuanceSummary.set(null);
+    this.issuanceKey ||= createIdempotencyKey();
     const v = this.issueForm.getRawValue();
     const lines = (v.lines as { package_id: string; quantity: number }[]).map((l) => ({
       package_id: String(l.package_id),
       quantity: Number(l.quantity),
     }));
     this.api
-      .post<{ count: number; batches: BatchRow[] }>('/admin/agent-batches/', {
+      .post<IssuanceResponse>(`/admin/agents/${v.agent_id}/issuances/`, {
         agent_id: v.agent_id,
         node_id: v.node_id,
         settlement_mode: v.settlement_mode,
         lines,
-      })
+      }, { 'Idempotency-Key': this.issuanceKey })
       .subscribe({
         next: (res) => {
           const batches = res.batches ?? [];
           this.issueResults.set(batches);
+          this.issuanceSummary.set(res.summary);
+          this.issuanceId = res.id;
+          this.issuanceKey = null;
           this.issuing.set(false);
           this.reloadBatches();
           this.reloadDebts();
           this.reloadVouchers();
           this.reloadAgents();
-          for (const batch of batches) {
-            setTimeout(() => this.refreshIssued(batch.id), 1500);
-          }
+          setTimeout(() => this.refreshIssuance(), 1500);
         },
         error: (err: unknown) => {
           this.issueError.set(err instanceof AppError ? err.message : this.errMsg(err));
@@ -985,9 +1209,129 @@ export class AdminAgentsComponent implements OnInit {
     });
   }
 
+  packageProgress(batch: BatchRow): string {
+    const items=batch.items || []; const ready=items.filter(x=>x.provisioning_status==='success').length; const failed=items.filter(x=>x.provisioning_status==='failed').length;
+    return failed ? `${ready}/${batch.quantity} ready · ${failed} failed` : ready===batch.quantity ? `${ready}/${batch.quantity} ready` : `${ready}/${batch.quantity} provisioning in background`;
+  }
+  packageHasFailure(batch: BatchRow): boolean { return (batch.items || []).some(x=>x.provisioning_status==='failed'); }
+
+  loadAssignments(agent: AgentRow): void {
+    this.assignmentAgent.set(agent);
+    this.api.get<AssignmentRow[]>(`/admin/agents/${agent.id}/assignments/`).subscribe({
+      next: (rows) => this.assignments.set(Array.isArray(rows) ? rows : []),
+    });
+  }
+
+  addAssignment(agent: AgentRow, siteId: string): void {
+    if (!siteId) return;
+    this.api.post<AssignmentRow>(`/admin/agents/${agent.id}/assignments/`, { site_id: siteId }).subscribe({
+      next: () => { this.loadAssignments(agent); this.reloadAgents(); },
+      error: (err: unknown) => this.issueError.set(err instanceof AppError ? err.message : this.errMsg(err)),
+    });
+  }
+
+  assignmentAction(assignment: AssignmentRow, action: 'suspend' | 'reactivate' | 'end'): void {
+    if (action === 'reactivate') {
+      this.executeAssignmentAction(assignment, action, '');
+      return;
+    }
+    this.openReasonDialog({
+      eyebrow: 'Assignment control',
+      title: action === 'suspend' ? 'Suspend this assignment?' : 'End this assignment?',
+      description: action === 'suspend'
+        ? 'Agent access to this site will be paused until an administrator reactivates it.'
+        : 'This closes the assignment. Historical batches and audit records will remain available.',
+      confirmLabel: action === 'suspend' ? 'Suspend assignment' : 'End assignment',
+      danger: true,
+      submit: (reason) => this.executeAssignmentAction(assignment, action, reason),
+    });
+  }
+
+  private executeAssignmentAction(assignment: AssignmentRow, action: 'suspend' | 'reactivate' | 'end', reason: string): void {
+    this.reasonBusy.set(true);
+    this.api.post<AssignmentRow>(`/admin/agent-assignments/${assignment.id}/${action}/`, { reason }).subscribe({
+      next: () => {
+        this.finishReasonDialog();
+        const agent = this.assignmentAgent();
+        if (agent) this.loadAssignments(agent);
+        this.reloadAgents();
+      },
+      error: (err: unknown) => {
+        this.reasonBusy.set(false);
+        const message = err instanceof AppError ? err.message : this.errMsg(err);
+        if (this.reasonDialog()) this.reasonError.set(message);
+        else this.issueError.set(message);
+      },
+    });
+  }
+
+  setPrintPermission(agent: AgentRow, assignment: AssignmentRow, enabled: boolean): void {
+    this.openReasonDialog({
+      eyebrow: 'PDF access control',
+      title: enabled ? 'Enable voucher PDF printing?' : 'Disable voucher PDF printing?',
+      description: enabled
+        ? `${agent.display_name} will be allowed to generate and download credential-bearing PDFs for ${assignment.site_name}.`
+        : `${agent.display_name} will immediately lose generation and authenticated download access for ${assignment.site_name}. Historical print records will remain.`,
+      confirmLabel: enabled ? 'Enable PDF printing' : 'Disable PDF printing',
+      danger: !enabled,
+      submit: (reason) => {
+        this.reasonBusy.set(true);
+        const action = enabled ? 'grant' : 'revoke';
+        this.api.post(`/admin/agents/${agent.id}/print-permissions/${assignment.site}/${action}/`, { reason }).subscribe({
+          next: () => { this.finishReasonDialog(); this.loadAssignments(agent); },
+          error: (err: unknown) => { this.reasonBusy.set(false); this.reasonError.set(err instanceof AppError ? err.message : this.errMsg(err)); },
+        });
+      },
+    });
+  }
+
+  updateReason(event: Event): void {
+    this.reasonText.set((event.target as HTMLTextAreaElement).value);
+    this.reasonError.set(null);
+  }
+
+  confirmReasonDialog(): void {
+    const reason = this.reasonText().trim();
+    if (reason.length < 3) {
+      this.reasonError.set('Weka sababu yenye angalau herufi 3.');
+      return;
+    }
+    this.reasonDialog()?.submit(reason);
+  }
+
+  closeReasonDialog(): void {
+    if (this.reasonBusy()) return;
+    this.finishReasonDialog();
+  }
+
+  private openReasonDialog(dialog: ReasonDialog): void {
+    this.reasonText.set('');
+    this.reasonError.set(null);
+    this.reasonBusy.set(false);
+    this.reasonDialog.set(dialog);
+  }
+
+  private finishReasonDialog(): void {
+    this.reasonBusy.set(false);
+    this.reasonDialog.set(null);
+    this.reasonText.set('');
+    this.reasonError.set(null);
+  }
+
+  private refreshIssuance(): void {
+    if (!this.issuanceId) return;
+    this.api.get<IssuanceResponse>(`/admin/agent-issuances/${this.issuanceId}/`).subscribe({
+      next: (result) => {
+        this.issueResults.set(result.batches ?? []);
+        this.issuanceSummary.set(result.summary);
+        if (result.summary.pending > 0) setTimeout(() => this.refreshIssuance(), 2000);
+      },
+    });
+  }
+
   private reloadAgents(): void {
     this.loading.set(true);
-    this.api.get<AgentRow[]>('/admin/agents/').subscribe({
+    this.api.get<AgentRow[]>('/admin/agents/', { status: this.agentStatusFilter() }).subscribe({
       next: (data) => {
         this.agents.set(
           (Array.isArray(data) ? data : []).map((a) => ({
@@ -1010,9 +1354,56 @@ export class AdminAgentsComponent implements OnInit {
     this.api.get<BatchRow[]>('/admin/agent-batches/').subscribe({
       next: (data) => {
         this.batches.set(Array.isArray(data) ? data : []);
+        this.batchPage.set(1);
         this.batchesLoading.set(false);
       },
       error: () => this.batchesLoading.set(false),
+    });
+  }
+
+  printBatch(batch: BatchRow): void {
+    this.printingId.set(batch.id);
+    this.api.get<PrintInfo>(`/admin/agent-batches/${batch.id}/print/`).subscribe({
+      next: (info) => {
+        if (!info.eligibility.eligible) { this.printingId.set(null); return; }
+        if (info.history.length) {
+          this.printingId.set(null);
+          this.openReasonDialog({
+            eyebrow: 'Controlled reprint',
+            title: `Reprint batch ${batch.id.slice(0, 8).toUpperCase()}?`,
+            description: 'A new immutable print version will be created. The previous PDF and its audit history will not be changed.',
+            confirmLabel: 'Create reprint',
+            danger: false,
+            submit: (reason) => this.createPrint(batch, reason),
+          });
+        } else {
+          this.createPrint(batch, '');
+        }
+      },
+      error: () => this.printingId.set(null),
+    });
+  }
+
+  private createPrint(batch: BatchRow, reason: string): void {
+    this.reasonBusy.set(true);
+    this.printingId.set(batch.id);
+    this.api.post<PrintJob>(`/admin/agent-batches/${batch.id}/print/`, { reprint_reason: reason }, { 'Idempotency-Key': createIdempotencyKey() }).subscribe({
+      next: (job) => { this.printingId.set(null); this.finishReasonDialog(); this.downloadPrint(job.id); },
+      error: (err: unknown) => {
+        this.printingId.set(null);
+        this.reasonBusy.set(false);
+        const message = err instanceof AppError ? err.message : this.errMsg(err);
+        if (this.reasonDialog()) this.reasonError.set(message);
+        else this.issueError.set(message);
+      },
+    });
+  }
+
+  private downloadPrint(jobId: string): void {
+    this.api.download(`/admin/voucher-print-jobs/${jobId}/download/`).subscribe((blob) => {
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a'); link.href = url; link.download = `bitech-vouchers-${jobId}.pdf`; link.click();
+      URL.revokeObjectURL(url);
     });
   }
 
@@ -1024,11 +1415,12 @@ export class AdminAgentsComponent implements OnInit {
 
   private reloadVouchers(): void {
     this.vouchersLoading.set(true);
-    const params: Record<string, string> = { limit: '300' };
+    const params: Record<string, string> = { limit: '500' };
     if (this.voucherFilter() === 'unpaid') params['unpaid'] = 'true';
     this.api.get<VoucherRow[]>('/admin/agent-vouchers/', params).subscribe({
       next: (data) => {
         this.vouchers.set(Array.isArray(data) ? data : []);
+        this.voucherPage.set(1);
         this.vouchersLoading.set(false);
       },
       error: () => this.vouchersLoading.set(false),

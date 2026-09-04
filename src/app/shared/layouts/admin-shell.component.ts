@@ -8,10 +8,10 @@ import { AuthService } from '../../core/auth/auth.service';
   standalone: true,
   imports: [RouterOutlet, RouterLink, RouterLinkActive],
   template: `
-    <div class="min-h-full bg-surface-0" data-theme="dark">
+    <div class="min-h-full bg-surface-0">
       <div class="mx-auto flex min-h-full max-w-6xl flex-col md:flex-row">
         <aside
-          class="border-b border-border bg-surface-1 px-4 py-5 md:min-h-screen md:w-60 md:border-b-0 md:border-r"
+          class="border-b border-border bg-surface-1 px-4 py-5 md:sticky md:top-0 md:h-screen md:w-60 md:shrink-0 md:self-start md:border-b-0 md:border-r"
         >
           <a routerLink="/admin" class="flex items-center gap-3 no-underline">
             <img src="brand/logo-mark.svg" alt="" class="h-9 w-9 rounded-xl" width="36" height="36" />
@@ -58,21 +58,27 @@ import { AuthService } from '../../core/auth/auth.service';
             >
               Vouchers
             </a>
-            <a
-              routerLink="/admin/reports"
-              routerLinkActive="bg-signal-muted text-signal"
-              class="block rounded-xl px-3 py-2.5 font-semibold text-[var(--text-secondary)] no-underline hover:bg-signal-muted/60"
-            >
-              Mauzo
-            </a>
-            <a
-              routerLink="/admin/agents"
-              routerLinkActive="bg-signal-muted text-signal"
-              class="block rounded-xl px-3 py-2.5 font-semibold text-[var(--text-secondary)] no-underline hover:bg-signal-muted/60"
-            >
-              Agents
-            </a>
+            <a routerLink="/admin/operations" routerLinkActive="bg-signal-muted text-signal" class="block rounded-xl px-3 py-2.5 font-semibold text-[var(--text-secondary)] no-underline hover:bg-signal-muted/60">Payments & Operations</a>
+              <a
+                routerLink="/admin/reports"
+                routerLinkActive="bg-signal-muted text-signal"
+                class="block rounded-xl px-3 py-2.5 font-semibold text-[var(--text-secondary)] no-underline hover:bg-signal-muted/60"
+              >
+                Reports & Audit
+              </a>
+            @if (auth.user()?.role !== 'support') {
+              <a
+                routerLink="/admin/agents"
+                routerLinkActive="bg-signal-muted text-signal"
+                class="block rounded-xl px-3 py-2.5 font-semibold text-[var(--text-secondary)] no-underline hover:bg-signal-muted/60"
+              >
+                Agents
+              </a>
+              <a routerLink="/admin/agent-batches" routerLinkActive="bg-signal-muted text-signal" class="block rounded-xl px-3 py-2.5 font-semibold text-[var(--text-secondary)] no-underline hover:bg-signal-muted/60">Agent Batches & PDF</a>
+            }
           </nav>
+
+          <a routerLink="/admin/profile" routerLinkActive="bg-signal-muted text-signal" class="mt-4 block rounded-xl px-3 py-2.5 font-semibold text-[var(--text-secondary)] no-underline hover:bg-signal-muted/60">My Profile & SMS</a>
 
           <div class="mt-10 border-t border-border pt-4 text-xs text-[var(--text-secondary)]">
             <p class="font-semibold text-ink">{{ auth.user()?.username }}</p>

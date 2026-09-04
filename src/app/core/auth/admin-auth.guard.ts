@@ -12,19 +12,16 @@ export const adminAuthGuard: CanActivateFn = () => {
   if (auth.isAuthenticated() && auth.isAgent()) {
     return router.createUrlTree(['/agent']);
   }
-  return router.createUrlTree(['/admin/login']);
+  return router.createUrlTree(['/login']);
 };
 
-export const guestAdminGuard: CanActivateFn = () => {
+export const guestAuthGuard: CanActivateFn = () => {
   const auth = inject(AuthService);
   const router = inject(Router);
   if (!auth.isAuthenticated()) {
     return true;
   }
-  if (auth.isAgent()) {
-    return router.createUrlTree(['/agent']);
-  }
-  return router.createUrlTree(['/admin']);
+  return router.createUrlTree([auth.homeUrl()]);
 };
 
 export const agentAuthGuard: CanActivateFn = () => {
@@ -36,17 +33,8 @@ export const agentAuthGuard: CanActivateFn = () => {
   if (auth.isAuthenticated() && auth.isAdmin()) {
     return router.createUrlTree(['/admin']);
   }
-  return router.createUrlTree(['/agent/login']);
+  return router.createUrlTree(['/login']);
 };
 
-export const guestAgentGuard: CanActivateFn = () => {
-  const auth = inject(AuthService);
-  const router = inject(Router);
-  if (!auth.isAuthenticated()) {
-    return true;
-  }
-  if (auth.isAdmin()) {
-    return router.createUrlTree(['/admin']);
-  }
-  return router.createUrlTree(['/agent']);
-};
+export const guestAdminGuard = guestAuthGuard;
+export const guestAgentGuard = guestAuthGuard;

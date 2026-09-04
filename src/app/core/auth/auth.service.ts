@@ -35,16 +35,11 @@ export class AuthService {
         username,
         password,
       })
-      .pipe(tap((res) => this.persistSession(res.access, res.refresh, this.normalizeUser(res.user, 'admin'))));
+      .pipe(tap((res) => this.persistSession(res.access, res.refresh, res.user)));
   }
 
   agentLogin(username: string, password: string): Observable<LoginResponse> {
-    return this.api
-      .post<LoginResponse, { username: string; password: string }>('/auth/agent/login/', {
-        username,
-        password,
-      })
-      .pipe(tap((res) => this.persistSession(res.access, res.refresh, this.normalizeUser(res.user, 'agent'))));
+    return this.login(username, password);
   }
 
   refresh(): Observable<RefreshResponse> {
@@ -73,7 +68,6 @@ export class AuthService {
   }
 
   logout(redirect = true): void {
-    const wasAgent = this.isAgent();
     this.refreshInFlight = null;
     sessionStorage.removeItem(ACCESS_KEY);
     sessionStorage.removeItem(REFRESH_KEY);
@@ -81,16 +75,12 @@ export class AuthService {
     this.accessSignal.set(null);
     this.userSignal.set(null);
     if (redirect) {
-      void this.router.navigateByUrl(wasAgent ? '/agent/login' : '/admin/login');
+      void this.router.navigateByUrl('/login');
     }
   }
 
-  private normalizeUser(user: AuthUser, fallbackKind: 'admin' | 'agent'): AuthUser {
-    return {
-      ...user,
-      kind: user.kind ?? fallbackKind,
-      role: user.role ?? (fallbackKind === 'agent' ? 'agent' : 'site_manager'),
-    };
+  homeUrl(): '/admin' | '/agent' {
+    return this.isAgent() ? '/agent' : '/admin';
   }
 
   private persistSession(access: string, refresh: string, user: AuthUser): void {
@@ -106,9 +96,7 @@ export class AuthService {
     if (!raw) return null;
     try {
       const user = JSON.parse(raw) as AuthUser;
-      if (!user.kind) {
-        user.kind = user.role === 'agent' ? 'agent' : 'admin';
-      }
+      if (!user.kind || !user.role || !Array.isArray(user.capabilities)) return null;
       return user;
     } catch {
       return null;

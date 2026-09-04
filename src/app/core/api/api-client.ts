@@ -21,9 +21,11 @@ export class ApiClient {
       .pipe(map((envelope) => this.unwrap(envelope)));
   }
 
-  post<T, B = unknown>(path: string, body: B): Observable<T> {
+  post<T, B = unknown>(path: string, body: B, headers?: Record<string, string>): Observable<T> {
     return this.http
-      .post<ApiEnvelope<T>>(this.url(path), body)
+      .post<ApiEnvelope<T>>(this.url(path), body, {
+        headers: headers ? new HttpHeaders(headers) : undefined,
+      })
       .pipe(map((envelope) => this.unwrap(envelope)));
   }
 
@@ -37,6 +39,10 @@ export class ApiClient {
     return this.http
       .delete<ApiEnvelope<T>>(this.url(path))
       .pipe(map((envelope) => this.unwrap(envelope)));
+  }
+
+  download(path: string): Observable<Blob> {
+    return this.http.get(this.url(path), { responseType: 'blob' });
   }
 
   getHealthLive(): Observable<HealthLiveData> {

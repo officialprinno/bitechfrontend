@@ -14,7 +14,7 @@
   --border-subtle: #d5dee3;
 
   --text-primary: #0b1f2a;
-  --text-secondary: #4a5c66;
+  --text-secondary: #344750;
   --text-inverse: #f4f7f8;
 
   --success: #1b7f4e;
@@ -92,6 +92,18 @@ html.dark,
       var(--surface-0);
     -webkit-font-smoothing: antialiased;
     text-rendering: optimizeLegibility;
+  }
+
+  input::placeholder,
+  textarea::placeholder {
+    color: #60727c;
+    opacity: 1;
+  }
+
+  label,
+  th,
+  dt {
+    text-rendering: geometricPrecision;
   }
 
   *:focus-visible {

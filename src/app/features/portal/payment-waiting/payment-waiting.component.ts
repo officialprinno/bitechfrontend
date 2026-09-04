@@ -1,7 +1,7 @@
 import { Component, OnDestroy, OnInit, computed, inject, signal } from '@angular/core';
 import { Title } from '@angular/platform-browser';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
-import { Subscription, switchMap, timer } from 'rxjs';
+import { EMPTY, Subscription, catchError, switchMap, timer } from 'rxjs';
 
 import { environment } from '../../../../environments/environment';
 import { AppError } from '../../../core/models/app-error';
@@ -99,6 +99,11 @@ const STATUS_RANK: Record<string, number> = {
 
       @if (error()) {
         <app-error-state title="Hitilafu" [message]="error()!" />
+        @if (!timedOut()) {
+          <button type="button" class="font-semibold text-signal" (click)="recheck()">
+            Angalia tena
+          </button>
+        }
       }
 
       @if (timedOut() && status()?.status === 'pending') {
@@ -239,6 +244,7 @@ export class PaymentWaitingComponent implements OnInit, OnDestroy {
   readonly copyMessageIsError = signal(false);
   readonly manualSelected = signal(false);
   readonly checkoutSummary = signal<PaymentCheckoutSummary | null>(null);
+  readonly paymentGateway = signal<'pesapal' | 'azampay'>('azampay');
 
   readonly delivery = computed(() => {
     const d = this.status()?.delivery;
@@ -299,7 +305,9 @@ export class PaymentWaitingComponent implements OnInit, OnDestroy {
       return 'Voucher inaandaliwa…';
     }
     if (s === 'failed' || s === 'expired') return 'Unaweza jaribu tena kutoka checkout.';
-    return 'Thibitisha USSD push kwenye simu yako (weka PIN).';
+    return this.paymentGateway() === 'pesapal'
+      ? 'Malipo yanathibitishwa... Usifunge ukurasa huu.'
+      : 'Thibitisha USSD push kwenye simu yako (weka PIN).';
   });
 
   private sub?: Subscription;
@@ -307,11 +315,28 @@ export class PaymentWaitingComponent implements OnInit, OnDestroy {
   private paymentId = '';
 
   ngOnInit(): void {
-    this.paymentId = this.route.snapshot.paramMap.get('paymentId') || '';
+    const activePayment = this.payments.getActivePayment();
+    const resultToken = this.route.snapshot.queryParamMap.get('result_token')?.trim() || '';
+    this.paymentId = this.route.snapshot.paramMap.get('paymentId') || activePayment?.payment_id || '';
+    if (activePayment?.payment_id === this.paymentId) {
+      this.paymentGateway.set(activePayment.payment_gateway);
+      this.payments.storePollToken(activePayment.payment_id, activePayment.poll_token);
+      if (resultToken) {
+        this.recoverResult(resultToken, activePayment.payment_id);
+        return;
+      }
+    }
     this.checkoutSummary.set(this.payments.getCheckoutSummary(this.paymentId));
     this.mockMode.set(this.route.snapshot.queryParamMap.get('mock') === '1');
     if (!this.paymentId) {
-      void this.router.navigateByUrl('/');
+      if (resultToken) {
+        this.recoverResult(resultToken);
+        return;
+      }
+      this.loading.set(false);
+      this.error.set(
+        'Taarifa za kurejesha matokeo ya malipo hazipatikani. Rudi checkout ukihitaji kuanza tena.',
+      );
       return;
     }
     if (!this.payments.getPollToken(this.paymentId)) {
@@ -322,26 +347,81 @@ export class PaymentWaitingComponent implements OnInit, OnDestroy {
       return;
     }
 
-    const started = Date.now();
-    const uxTimeout = environment.paymentPollTimeoutMs;
-    const interval = environment.paymentPollIntervalMs;
+    this.startPolling();
+  }
 
-    this.sub = timer(0, interval)
-      .pipe(switchMap(() => this.payments.status(this.paymentId)))
+  private recoverResult(resultToken: string, expectedPaymentId = ''): void {
+    this.payments.recoverResult(resultToken).subscribe({
+      next: (context) => {
+        this.removeResultToken();
+        if (expectedPaymentId && context.payment_id !== expectedPaymentId) {
+          this.loading.set(false);
+          this.error.set('Kiungo cha matokeo hakilingani na malipo yaliyohifadhiwa.');
+          return;
+        }
+        this.payments.storePaymentState(context);
+        this.paymentId = context.payment_id;
+        this.paymentGateway.set(context.payment_gateway);
+        this.checkoutSummary.set({
+          amount: context.display.amount,
+          currency: context.display.currency,
+          phone_number: '',
+          purchase_type: 'self',
+        });
+        this.startPolling();
+      },
+      error: () => {
+        this.loading.set(false);
+        this.error.set(
+          'Kiungo cha matokeo ya malipo si halali au muda wake umeisha. Rudi checkout ukihitaji kuanza tena.',
+        );
+      },
+    });
+  }
+
+  private removeResultToken(): void {
+    void this.router.navigate([], {
+      relativeTo: this.route,
+      queryParams: { result_token: null },
+      queryParamsHandling: 'merge',
+      replaceUrl: true,
+    });
+  }
+
+  recheck(): void {
+    if (this.sub && !this.sub.closed) return;
+    this.startPolling();
+  }
+
+  private startPolling(): void {
+    const started = Date.now();
+    this.error.set(null);
+    this.timedOut.set(false);
+    this.sub = timer(0, environment.paymentPollIntervalMs)
+      .pipe(
+        switchMap(() => this.payments.status(this.paymentId).pipe(
+          catchError((err: unknown) => {
+            this.loading.set(false);
+            this.error.set(err instanceof AppError ? err.message : 'Imeshindikana kuangalia hali kwa muda.');
+            if (Date.now() - started >= environment.paymentPollTimeoutMs) {
+              this.timedOut.set(true);
+              this.sub?.unsubscribe();
+            }
+            return EMPTY;
+          }),
+        )),
+      )
       .subscribe({
         next: (res) => {
           this.loading.set(false);
+          this.error.set(null);
           this.applyStatus(res);
           if (this.isSettled(this.status())) {
             this.sub?.unsubscribe();
-          } else if (Date.now() - started >= uxTimeout) {
+          } else if (Date.now() - started >= environment.paymentPollTimeoutMs) {
             this.timedOut.set(true);
             this.sub?.unsubscribe();
           }
-        },
-        error: (err: unknown) => {
-          this.loading.set(false);
-          this.error.set(err instanceof AppError ? err.message : 'Imeshindikana kuangalia hali.');
         },
       });
   }

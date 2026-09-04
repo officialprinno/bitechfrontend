@@ -1,6 +1,7 @@
 import { DatePipe } from '@angular/common';
 import { Component, OnInit, computed, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
+import { ActivatedRoute, RouterLink } from '@angular/router';
 
 import { ApiClient } from '../../../core/api/api-client';
 import { AppError } from '../../../core/models/app-error';
@@ -31,7 +32,7 @@ interface TestResult {
 @Component({
   selector: 'app-admin-nodes',
   standalone: true,
-  imports: [DatePipe, FormsModule, ErrorStateComponent, SkeletonComponent],
+  imports: [DatePipe, FormsModule, ErrorStateComponent, SkeletonComponent, RouterLink],
   template: `
     <section class="space-y-6">
       <div class="flex flex-wrap items-end justify-between gap-3">
@@ -55,6 +56,7 @@ interface TestResult {
           </select>
         </label>
       </div>
+      @if (statusFilter()) {<div class="flex items-center gap-3 rounded-xl border border-signal/30 bg-signal-muted px-4 py-2 text-sm">Health: <strong>{{ statusFilter() }}</strong><a routerLink="/admin/nodes" class="text-signal underline">Clear filter</a></div>}
 
       @if (loading()) {
         <app-skeleton height="8rem" />
@@ -129,7 +131,7 @@ interface TestResult {
               } @empty {
                 <tr>
                   <td colspan="6" class="px-4 py-8 text-[var(--text-secondary)]">
-                    Hakuna nodes.
+                    {{ statusFilter() ? 'No ' + statusFilter() + ' nodes found.' : 'Hakuna nodes.' }}
                   </td>
                 </tr>
               }
@@ -142,11 +144,13 @@ interface TestResult {
 })
 export class AdminNodesComponent implements OnInit {
   private readonly api = inject(ApiClient);
+  private readonly route = inject(ActivatedRoute);
 
   readonly loading = signal(true);
   readonly error = signal<string | null>(null);
   readonly nodes = signal<NodeRow[]>([]);
   readonly siteFilter = signal('');
+  readonly statusFilter = signal('');
   readonly testingId = signal<string | null>(null);
   readonly testMsg = signal<Record<string, { ok: boolean; detail: string }>>({});
 
@@ -159,7 +163,7 @@ export class AdminNodesComponent implements OnInit {
     const rank = { offline: 0, unknown: 1, online: 2 } as const;
     const site = this.siteFilter();
     return this.nodes()
-      .filter((n) => !site || n.site_name === site)
+      .filter((n) => (!site || n.site_name === site) && (!this.statusFilter() || n.health_status === this.statusFilter()))
       .slice()
       .sort(
         (a, b) =>
@@ -170,12 +174,12 @@ export class AdminNodesComponent implements OnInit {
   });
 
   ngOnInit(): void {
-    this.reload();
+    this.route.queryParamMap.subscribe(params => { this.statusFilter.set(params.get('status') || ''); this.reload(); });
   }
 
   reload(): void {
     this.loading.set(true);
-    this.api.get<NodeRow[]>('/admin/nodes/', { page_size: 100 }).subscribe({
+    this.api.get<NodeRow[]>('/admin/nodes/', { page_size: 100, health_status: this.statusFilter(), is_active: this.statusFilter() ? 'true' : '' }).subscribe({
       next: (data) => {
         this.nodes.set(Array.isArray(data) ? data : []);
         this.loading.set(false);

@@ -1,8 +1,9 @@
 import { DecimalPipe, DatePipe } from '@angular/common';
-import { Component, OnInit, inject, signal } from '@angular/core';
+import { Component, OnInit, computed, inject, signal } from '@angular/core';
 import { ActivatedRoute, RouterLink } from '@angular/router';
 
 import { ApiClient } from '../../../core/api/api-client';
+import { createIdempotencyKey } from '../../../core/api/idempotency-key';
 import { AppError } from '../../../core/models/app-error';
 import { ErrorStateComponent } from '../../../shared/ui/error-state/error-state.component';
 import { SkeletonComponent } from '../../../shared/ui/skeleton/skeleton.component';
@@ -37,6 +38,7 @@ interface VoucherRow {
 
 interface BatchRow {
   id: string;
+  issuance_request: string | null;
   created_at: string;
   quantity: number;
   settlement_mode: string;
@@ -45,6 +47,17 @@ interface BatchRow {
   package_name_snapshot: string;
   site_name: string;
   node_identifier: string;
+}
+
+interface MainBatch {
+  id: string;
+  lines: BatchRow[];
+  quantity: number;
+  totalAmount: number;
+  siteName: string;
+  nodeIdentifier: string;
+  createdAt: string;
+  groupedIssuance: boolean;
 }
 
 interface BatchItem {
@@ -56,11 +69,32 @@ interface BatchItem {
   is_used?: boolean;
   mac_address?: string;
   device_name?: string;
+  voucher_password?: string | null;
+  barcode_svg?: string | null;
+  lifecycle_status?: string;
+  source?: string;
+  activation_policy?: string;
+  activated_at?: string | null;
+  expires_at?: string | null;
+  sell_by_at?: string | null;
 }
 
 interface BatchDetail extends BatchRow {
   items: BatchItem[];
   notes: string;
+}
+
+interface PrintJob {
+  id: string;
+  print_number: number;
+  voucher_count: number;
+  generated_at: string;
+}
+
+interface PrintInfo {
+  eligibility: { total: number; eligible: number; excluded: number };
+  permission: { enabled: boolean; assignment_status: string };
+  history: PrintJob[];
 }
 
 @Component({
@@ -102,11 +136,42 @@ interface BatchDetail extends BatchRow {
                   TZS {{ b.total_amount | number: '1.0-0' }}
                 </span>
               </div>
-              <ul class="divide-y divide-border rounded-2xl border border-border bg-surface-1">
+              @if (printInfo(); as info) {
+                <div class="rounded-2xl border border-border bg-surface-1 p-4 text-sm">
+                  <p class="font-semibold text-ink">Printable inventory</p>
+                  <p class="mt-1 text-[var(--text-secondary)]">
+                    {{ info.eligibility.eligible }} ready · {{ info.eligibility.excluded }} unavailable
+                  </p>
+                  @if (!info.permission.enabled) {
+                    <p class="mt-3 rounded-xl border border-warning/40 bg-warning/10 px-3 py-2 text-warning">
+                      PDF printing has not been enabled by Admin.
+                    </p>
+                  } @else {
+                  @if (info.history.length) {
+                    <label class="mt-3 block">
+                      <span class="text-xs font-semibold text-ink">Reason for reprint</span>
+                      <input [value]="reprintReason()" (input)="reprintReason.set($any($event.target).value)" maxlength="255" placeholder="Why is another copy required?" class="mt-1 w-full rounded-xl border border-border bg-surface-0 px-3 py-2 text-ink" />
+                    </label>
+                  }
+                  <div class="mt-3 flex flex-wrap gap-2">
+                    <button type="button" class="rounded-xl bg-signal px-3 py-2 font-semibold text-[var(--text-inverse)] disabled:opacity-60" [disabled]="printing() || !info.eligibility.eligible" (click)="printBatch(b.id)">
+                      {{ info.history.length ? 'Reprint PDF' : 'Generate PDF' }}
+                    </button>
+                    @if (info.history[0]; as latest) {
+                      <button type="button" class="rounded-xl border border-border px-3 py-2 font-semibold text-signal" (click)="downloadPrint(latest.id)">Download print #{{ latest.print_number }}</button>
+                    }
+                  </div>
+                  }
+                </div>
+              }
+              <ul class="grid gap-3 sm:grid-cols-2">
                 @for (item of b.items; track item.line_no) {
-                  <li class="flex flex-wrap items-center justify-between gap-2 px-4 py-3 text-sm">
+                  <li class="flex min-h-48 flex-wrap items-center justify-between gap-4 rounded-2xl border border-border bg-surface-1 p-4 text-sm shadow-soft">
                     <div>
                       <p class="font-mono text-signal">{{ item.voucher_code || 'pending…' }}</p>
+                      @if (item.voucher_password && item.voucher_password !== item.voucher_code) {
+                        <p class="font-mono text-xs text-ink">Password: {{ item.voucher_password }}</p>
+                      }
                       <p class="text-xs text-[var(--text-secondary)]">
                         {{ item.package_name || b.package_name_snapshot }}
                       </p>
@@ -122,8 +187,12 @@ interface BatchDetail extends BatchRow {
                         <p class="mt-1 text-xs text-[var(--text-secondary)]">Haijatumika</p>
                       }
                     </div>
+                    @if (item.barcode_svg) {
+                      <img [src]="item.barcode_svg" [alt]="'Barcode ya ' + item.voucher_code" class="h-16 max-w-52 rounded-xl border border-border bg-white p-2" />
+                    }
                     <div class="text-right text-xs text-[var(--text-secondary)]">
-                      <p>{{ item.provisioning_status }}</p>
+                      <p class="font-semibold text-ink">{{ lifecycleLabel(item) }}</p>
+                      <p>{{ policyLabel(item.activation_policy) }}</p>
                       @if (item.amount) {
                         <p>TZS {{ item.amount | number: '1.0-0' }}</p>
                       }
@@ -159,6 +228,39 @@ interface BatchDetail extends BatchRow {
             </div>
           }
         }
+
+        <label class="block w-full max-w-md text-xs font-semibold text-[var(--text-secondary)]">Search inventory<input type="search" [value]="search()" (input)="updateSearch($event)" placeholder="Voucher, batch, package, site au node" class="mt-1 block w-full rounded-xl border border-border bg-surface-1 px-3 py-2.5 text-sm text-ink"></label>
+
+        <div>
+          <h2 class="font-display text-lg font-semibold text-ink">Batch nilizopewa</h2>
+          <p class="mt-1 text-sm text-[var(--text-secondary)]">Unaweza kuona batch na vouchers zake wakati wowote. Kuchapisha PDF kunahitaji ruhusa ya Admin.</p>
+          @if (batchesLoading()) {<app-skeleton height="6rem" class="mt-3" />}
+          @else if (!filteredBatches().length) {<p class="mt-3 rounded-xl border border-border bg-surface-1 p-4 text-sm text-[var(--text-secondary)]">Hakuna batch inayolingana na search.</p>}
+          @else {
+            <div class="mt-3 grid gap-3 sm:grid-cols-2">
+              @for (batch of pagedBatches(); track batch.id) {
+                <article class="rounded-2xl border border-border bg-surface-1 p-4 shadow-soft">
+                  <div class="flex items-start justify-between gap-3"><div><p class="font-display font-bold text-ink">Main Batch {{ shortId(batch.id) }}</p><p class="mt-1 text-xs text-[var(--text-secondary)]">{{ batch.siteName }} · {{ batch.nodeIdentifier }} · {{ batch.createdAt | date:'medium' }}</p></div><div class="text-right"><span class="rounded-full bg-surface-2 px-3 py-1 text-xs font-semibold text-ink">{{ batch.quantity }} vouchers</span><p class="mt-2 text-xs font-semibold text-signal">TZS {{ batch.totalAmount | number:'1.0-0' }}</p></div></div>
+                  <div class="mt-4 space-y-2 border-t border-border pt-3">
+                    @for (line of batch.lines; track line.id) {
+                      <div class="flex flex-wrap items-center justify-between gap-3 rounded-xl bg-surface-0 p-3"><div><p class="font-semibold text-ink">{{ line.package_name_snapshot }}</p><p class="text-xs text-[var(--text-secondary)]">{{ line.quantity }} vouchers · {{ statusLabel(line) }}</p></div><a [routerLink]="['/agent/batches', line.id]" class="rounded-xl border border-border px-3 py-2 text-xs font-semibold text-signal no-underline">View vouchers</a></div>
+                    }
+                  </div>
+                  @if (mainPrintInfo()[batch.id]; as info) {
+                    <div class="mt-4 border-t border-border pt-3">
+                      @if (!info.permission.enabled) {<p class="rounded-xl bg-warning/10 px-3 py-2 text-xs font-semibold text-warning">PDF printing haijaruhusiwa na Admin. Kuona batch na vouchers kumeruhusiwa.</p>}
+                      @else {
+                        @if (info.history.length) {<input [value]="mainReprintReasons()[batch.id] || ''" (input)="setMainReprintReason(batch.id,$event)" placeholder="Sababu ya reprint" class="mb-2 w-full rounded-xl border border-border bg-surface-0 px-3 py-2 text-sm text-ink" />}
+                        <button type="button" class="w-full rounded-xl bg-signal px-3 py-2.5 text-sm font-semibold text-[var(--text-inverse)] disabled:opacity-60" [disabled]="mainPrinting()===batch.id || !info.eligibility.eligible" (click)="printMainBatch(batch)">{{ mainPrinting()===batch.id ? 'Generating PDF…' : (info.history.length ? 'Reprint Main Batch PDF' : 'Print Main Batch PDF') }}</button>
+                      }
+                    </div>
+                  }
+                </article>
+              }
+            </div>
+            <div class="mt-3 flex items-center justify-end gap-2 text-sm"><button type="button" class="rounded-lg border border-border px-3 py-2 disabled:opacity-40" [disabled]="batchPage()===1" (click)="moveBatch(-1)">Previous</button><span class="px-2 font-semibold">Page {{ batchPage() }} / {{ batchPageCount() }}</span><button type="button" class="rounded-lg border border-border px-3 py-2 disabled:opacity-40" [disabled]="batchPage()===batchPageCount()" (click)="moveBatch(1)">Next</button></div>
+          }
+        </div>
 
         <div class="flex flex-wrap gap-2 text-sm">
           <button
@@ -221,7 +323,7 @@ interface BatchDetail extends BatchRow {
                 </tr>
               </thead>
               <tbody>
-                @for (v of vouchers(); track v.id) {
+                @for (v of pagedVouchers(); track v.id) {
                   <tr class="border-b border-border/70">
                     <td class="px-4 py-3">
                       <a
@@ -265,6 +367,7 @@ interface BatchDetail extends BatchRow {
               </tbody>
             </table>
           </div>
+          <div class="flex items-center justify-end gap-2 text-sm"><button type="button" class="rounded-lg border border-border px-3 py-2 disabled:opacity-40" [disabled]="voucherPage()===1" (click)="moveVoucher(-1)">Previous</button><span class="px-2 font-semibold">Page {{ voucherPage() }} / {{ voucherPageCount() }}</span><button type="button" class="rounded-lg border border-border px-3 py-2 disabled:opacity-40" [disabled]="voucherPage()===voucherPageCount()" (click)="moveVoucher(1)">Next</button></div>
         }
       }
     </section>
@@ -275,18 +378,37 @@ export class AgentBatchesComponent implements OnInit {
   private readonly route = inject(ActivatedRoute);
 
   readonly vouchers = signal<VoucherRow[]>([]);
+  readonly batches = signal<BatchRow[]>([]);
+  readonly search = signal('');
+  readonly mainBatches = computed<MainBatch[]>(() => {const groups=new Map<string,BatchRow[]>();for(const line of this.batches()){const id=line.issuance_request||line.id;groups.set(id,[...(groups.get(id)||[]),line]);}return [...groups.entries()].map(([id,lines])=>({id,lines,quantity:lines.reduce((sum,line)=>sum+line.quantity,0),totalAmount:lines.reduce((sum,line)=>sum+Number(line.total_amount),0),siteName:lines[0].site_name,nodeIdentifier:lines[0].node_identifier,createdAt:lines[0].created_at,groupedIssuance:!!lines[0].issuance_request}));});
+  readonly filteredBatches = computed(() => { const term=this.search().trim().toLowerCase();return term?this.mainBatches().filter(batch=>[batch.id,batch.siteName,batch.nodeIdentifier,...batch.lines.flatMap(line=>[line.package_name_snapshot,line.settlement_status])].some(value=>String(value||'').toLowerCase().includes(term))):this.mainBatches(); });
+  readonly filteredVouchers = computed(() => { const term=this.search().trim().toLowerCase();return term?this.vouchers().filter(v=>[v.voucher_code,v.batch_id,v.package_name,v.site_name,v.node_identifier,v.provisioning_status].some(value=>String(value||'').toLowerCase().includes(term))):this.vouchers(); });
+  readonly batchPage = signal(1);
+  readonly voucherPage = signal(1);
+  readonly batchPageCount = computed(() => Math.max(1,Math.ceil(this.filteredBatches().length/6)));
+  readonly voucherPageCount = computed(() => Math.max(1,Math.ceil(this.filteredVouchers().length/10)));
+  readonly pagedBatches = computed(() => this.filteredBatches().slice((this.batchPage()-1)*6,this.batchPage()*6));
+  readonly pagedVouchers = computed(() => this.filteredVouchers().slice((this.voucherPage()-1)*10,this.voucherPage()*10));
   readonly debt = signal<DebtSummary | null>(null);
   readonly detail = signal<BatchDetail | null>(null);
   readonly detailId = signal<string | null>(null);
   readonly filter = signal<'all' | 'unpaid' | 'paid'>('all');
   readonly listLoading = signal(true);
+  readonly batchesLoading = signal(true);
   readonly detailLoading = signal(false);
   readonly error = signal<string | null>(null);
+  readonly printInfo = signal<PrintInfo | null>(null);
+  readonly printing = signal(false);
+  readonly reprintReason = signal('');
+  readonly mainPrintInfo = signal<Record<string,PrintInfo>>({});
+  readonly mainReprintReasons = signal<Record<string,string>>({});
+  readonly mainPrinting = signal<string|null>(null);
 
   ngOnInit(): void {
     this.api.get<DebtSummary>('/agent/debt/').subscribe({
       next: (d) => this.debt.set(d),
     });
+    this.loadBatches();
     this.route.paramMap.subscribe((pm) => {
       const id = pm.get('id');
       this.detailId.set(id);
@@ -301,8 +423,14 @@ export class AgentBatchesComponent implements OnInit {
 
   setFilter(f: 'all' | 'unpaid' | 'paid'): void {
     this.filter.set(f);
+    this.voucherPage.set(1);
     this.loadVouchers();
   }
+
+  shortId(id:string):string{return id.split('-')[0].toUpperCase();}
+  updateSearch(event:Event):void{this.search.set((event.target as HTMLInputElement).value);this.batchPage.set(1);this.voucherPage.set(1);}
+  moveBatch(delta:number):void{this.batchPage.update(page=>Math.min(this.batchPageCount(),Math.max(1,page+delta)));}
+  moveVoucher(delta:number):void{this.voucherPage.update(page=>Math.min(this.voucherPageCount(),Math.max(1,page+delta)));}
 
   statusLabel(b: Pick<BatchRow, 'settlement_mode' | 'settlement_status'>): string {
     if (b.settlement_status === 'unpaid') return 'Haijalipwa (deni)';
@@ -318,6 +446,7 @@ export class AgentBatchesComponent implements OnInit {
     this.api.get<VoucherRow[]>('/agent/vouchers/', params).subscribe({
       next: (res) => {
         this.vouchers.set(Array.isArray(res) ? res : []);
+        this.voucherPage.set(1);
         this.listLoading.set(false);
       },
       error: (err: unknown) => {
@@ -333,11 +462,54 @@ export class AgentBatchesComponent implements OnInit {
       next: (b) => {
         this.detail.set(b);
         this.detailLoading.set(false);
+        this.loadPrintInfo(id);
       },
       error: (err: unknown) => {
         this.error.set(err instanceof AppError ? err.message : 'Hitilafu.');
         this.detailLoading.set(false);
       },
     });
+  }
+
+  lifecycleLabel(item:BatchItem):string{const state=item.lifecycle_status||item.provisioning_status;return ({ready:'Tayari kutumika',pending:'Inatengenezwa',provisioning:'Inatengenezwa',activated:'Imetumika',expired:'Imeisha muda',revoked:'Imefutwa',failed:'Imeshindikana',success:'Tayari kutumika'} as Record<string,string>)[state]||state;}
+  policyLabel(policy?:string):string{return policy==='first_use_activated'?'Muda unaanza voucher ikitumika':'Voucher ya agent';}
+  private mainPrintEndpoint(batch:MainBatch):string{return batch.groupedIssuance?`/agent/issuances/${batch.id}/print/`:`/agent/batches/${batch.id}/print/`;}
+  private loadMainPrintInfo(batch:MainBatch):void{this.api.get<PrintInfo>(this.mainPrintEndpoint(batch)).subscribe({next:info=>this.mainPrintInfo.update(all=>({...all,[batch.id]:info}))});}
+  setMainReprintReason(id:string,event:Event):void{const value=(event.target as HTMLInputElement).value;this.mainReprintReasons.update(all=>({...all,[id]:value}));}
+  printMainBatch(batch:MainBatch):void{const info=this.mainPrintInfo()[batch.id];const reason=(this.mainReprintReasons()[batch.id]||'').trim();if(info?.history.length&&reason.length<3){this.error.set('Weka sababu ya reprint yenye angalau herufi 3.');return;}this.mainPrinting.set(batch.id);this.api.post<PrintJob>(this.mainPrintEndpoint(batch),{reprint_reason:reason},{'Idempotency-Key':createIdempotencyKey()}).subscribe({next:job=>{this.mainPrinting.set(null);this.loadMainPrintInfo(batch);this.downloadPrint(job.id);},error:(err:unknown)=>{this.mainPrinting.set(null);this.error.set(err instanceof AppError?err.message:'PDF generation failed.');}});}
+
+  printBatch(id: string): void {
+    const reason = this.printInfo()?.history.length ? this.reprintReason().trim() : '';
+    if (this.printInfo()?.history.length && reason.length < 3) {
+      this.error.set('Weka sababu ya reprint yenye angalau herufi 3.');
+      return;
+    }
+    this.printing.set(true);
+    this.api.post<PrintJob>(`/agent/batches/${id}/print/`, { reprint_reason: reason || '' }, { 'Idempotency-Key': createIdempotencyKey() }).subscribe({
+      next: (job) => { this.printing.set(false); this.loadPrintInfo(id); this.downloadPrint(job.id); },
+      error: (err: unknown) => { this.printing.set(false); this.error.set(err instanceof AppError ? err.message : 'PDF generation failed.'); },
+    });
+  }
+
+  private loadBatches():void{
+    this.batchesLoading.set(true);
+    this.api.get<BatchRow[]>('/agent/batches/').subscribe({
+      next:(res)=>{this.batches.set(Array.isArray(res)?res:[]);this.batchPage.set(1);this.batchesLoading.set(false);for(const batch of this.mainBatches())this.loadMainPrintInfo(batch);},
+      error:()=>this.batchesLoading.set(false),
+    });
+  }
+
+  downloadPrint(jobId: string): void {
+    this.api.download(`/agent/voucher-print-jobs/${jobId}/download/`).subscribe((blob) => this.saveBlob(blob, `bitech-vouchers-${jobId}.pdf`));
+  }
+
+  private loadPrintInfo(id: string): void {
+    this.api.get<PrintInfo>(`/agent/batches/${id}/print/`).subscribe({ next: (info) => this.printInfo.set(info) });
+  }
+
+  private saveBlob(blob: Blob, filename: string): void {
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a'); link.href = url; link.download = filename; link.click();
+    URL.revokeObjectURL(url);
   }
 }

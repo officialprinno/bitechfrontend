@@ -6,7 +6,8 @@ import { Subscription, switchMap } from 'rxjs';
 
 import { AppError } from '../../../core/models/app-error';
 import { PurchaseType } from '../../../core/models/portal.model';
-import { PaymentService } from '../../../core/payments/payment.service';
+import { PaymentGateway, PaymentService } from '../../../core/payments/payment.service';
+import { PaymentNavigationService } from '../../../core/payments/payment-navigation.service';
 import { PortalSessionService } from '../../../core/portal/portal-session.service';
 import { ButtonComponent } from '../../../shared/ui/button/button.component';
 import { ErrorStateComponent } from '../../../shared/ui/error-state/error-state.component';
@@ -25,6 +26,16 @@ const PROVIDERS: ProviderOption[] = [
   { id: 'Halopesa', label: 'HaloPesa', accent: '#F36C00', mark: 'H' },
 ];
 
+export class CheckoutAttempt {
+  private key: string | null = null;
+
+  idempotencyKey(): string {
+    this.key ??= globalThis.crypto?.randomUUID?.() ??
+      `checkout-${Date.now()}-${Math.random().toString(36).slice(2)}-${Math.random().toString(36).slice(2)}`;
+    return this.key;
+  }
+}
+
 @Component({
   selector: 'app-portal-checkout',
   standalone: true,
@@ -34,7 +45,7 @@ const PROVIDERS: ProviderOption[] = [
       <div>
         <a routerLink="/" class="text-sm font-semibold text-signal no-underline">← Rudi</a>
         <h1 class="mt-3 font-display text-2xl font-bold text-ink">Malipo</h1>
-        <p class="mt-1 text-sm text-[var(--text-secondary)]">Hatua 2 kati ya 3 · AzamPay USSD</p>
+        <p class="mt-1 text-sm text-[var(--text-secondary)]">Hatua 2 kati ya 3 · Chagua njia ya malipo</p>
       </div>
 
       @if (!pkg() || !session()) {
@@ -54,6 +65,24 @@ const PROVIDERS: ProviderOption[] = [
         </div>
 
         <form class="space-y-5" [formGroup]="form" (ngSubmit)="submit()">
+          <fieldset>
+            <legend class="mb-2 text-sm font-semibold text-ink">Njia ya malipo</legend>
+            <div class="grid grid-cols-2 gap-2" role="radiogroup">
+              @for (gateway of gateways; track gateway.id) {
+                <button type="button" role="radio"
+                  [attr.aria-checked]="form.controls.payment_gateway.value === gateway.id"
+                  class="rounded-2xl border bg-surface-1 p-4 text-left transition"
+                  [class.border-signal]="form.controls.payment_gateway.value === gateway.id"
+                  [class.ring-2]="form.controls.payment_gateway.value === gateway.id"
+                  [class.ring-signal/30]="form.controls.payment_gateway.value === gateway.id"
+                  [class.border-border]="form.controls.payment_gateway.value !== gateway.id"
+                  (click)="selectGateway(gateway.id)">
+                  <span class="block font-semibold text-ink">{{ gateway.label }}</span>
+                  <span class="mt-1 block text-xs text-[var(--text-secondary)]">{{ gateway.hint }}</span>
+                </button>
+              }
+            </div>
+          </fieldset>
           <fieldset class="space-y-2">
             <legend class="text-sm font-semibold text-ink">Aina ya ununuzi</legend>
 
@@ -173,11 +202,16 @@ export class PortalCheckoutComponent implements OnInit, OnDestroy {
   private readonly payments = inject(PaymentService);
   private readonly router = inject(Router);
   private readonly fb = inject(FormBuilder);
+  private readonly paymentNavigation = inject(PaymentNavigationService);
 
   readonly session = this.portal.session;
   readonly pkg = this.portal.selectedPackage;
   readonly canSelf = this.portal.canPurchaseSelf;
   readonly providers = PROVIDERS;
+  readonly gateways: { id: PaymentGateway; label: string; hint: string }[] = [
+    { id: 'pesapal', label: 'Pesapal', hint: 'Endelea kwenye ukurasa salama wa Pesapal' },
+    { id: 'azampay', label: 'AzamPay', hint: 'Lipa kwa USSD push' },
+  ];
 
   readonly loading = signal(false);
   readonly error = signal<string | null>(null);
@@ -193,9 +227,11 @@ export class PortalCheckoutComponent implements OnInit, OnDestroy {
     ],
     // User must pick MNP explicitly (no M-Pesa default)
     provider: ['', Validators.required],
+    payment_gateway: this.fb.nonNullable.control<PaymentGateway>('pesapal', Validators.required),
   });
 
   private phoneSub?: Subscription;
+  private readonly checkoutAttempt = new CheckoutAttempt();
 
   ngOnInit(): void {
     const applyPurchaseDefault = () => {
@@ -228,14 +264,19 @@ export class PortalCheckoutComponent implements OnInit, OnDestroy {
     this.form.controls.provider.markAsTouched();
   }
 
+  selectGateway(gateway: PaymentGateway): void {
+    this.form.controls.payment_gateway.setValue(gateway);
+  }
+
   submit(): void {
     this.form.controls.provider.markAsTouched();
     if (this.form.invalid || !this.pkg() || !this.session()) return;
-    const { purchase_type, phone, provider, recipient_phone } = this.form.getRawValue();
+    const { purchase_type, phone, provider, recipient_phone, payment_gateway } = this.form.getRawValue();
     this.portal.setPurchaseType(purchase_type);
     this.loading.set(true);
     this.error.set(null);
 
+    const attemptKey = this.checkoutAttempt.idempotencyKey();
     const runCheckout = () =>
       this.payments.checkout({
         session_token: this.portal.session()!.session_token,
@@ -247,7 +288,8 @@ export class PortalCheckoutComponent implements OnInit, OnDestroy {
             ? recipient_phone.trim()
             : undefined,
         provider,
-      });
+        payment_gateway,
+      }, attemptKey);
 
     this.portal
       .refreshSession(purchase_type)
@@ -255,6 +297,14 @@ export class PortalCheckoutComponent implements OnInit, OnDestroy {
       .subscribe({
         next: (res) => {
           this.loading.set(false);
+          if (res.payment_gateway === 'pesapal') {
+            if (!this.paymentNavigation.isSafeProviderUrl(res.redirect_url)) {
+              this.error.set('Pesapal haikurudisha kiungo salama cha malipo. Jaribu tena.');
+              return;
+            }
+            this.paymentNavigation.redirect(res.redirect_url!);
+            return;
+          }
           void this.router.navigate(['/pay/waiting', res.payment_id], {
             queryParams: { mock: res.mock_mode ? '1' : '0' },
           });
@@ -270,6 +320,14 @@ export class PortalCheckoutComponent implements OnInit, OnDestroy {
               .subscribe({
                 next: (res) => {
                   this.loading.set(false);
+                  if (res.payment_gateway === 'pesapal') {
+                    if (!this.paymentNavigation.isSafeProviderUrl(res.redirect_url)) {
+                      this.error.set('Pesapal haikurudisha kiungo salama cha malipo. Jaribu tena.');
+                      return;
+                    }
+                    this.paymentNavigation.redirect(res.redirect_url!);
+                    return;
+                  }
                   void this.router.navigate(['/pay/waiting', res.payment_id], {
                     queryParams: { mock: res.mock_mode ? '1' : '0' },
                   });
@@ -292,4 +350,5 @@ export class PortalCheckoutComponent implements OnInit, OnDestroy {
         },
       });
   }
+
 }

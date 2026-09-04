@@ -12,12 +12,14 @@ export interface AuthUser {
   agent_id?: string;
   display_name?: string;
   agent_code?: string;
+  capabilities: string[];
 }
 
 export interface LoginResponse {
   access: string;
   refresh: string;
   user: AuthUser;
+  redirect: '/admin' | '/agent';
 }
 
 export interface RefreshResponse {

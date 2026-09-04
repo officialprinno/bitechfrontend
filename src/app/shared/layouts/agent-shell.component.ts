@@ -8,7 +8,7 @@ import { AuthService } from '../../core/auth/auth.service';
   standalone: true,
   imports: [RouterOutlet, RouterLink, RouterLinkActive],
   template: `
-    <div class="min-h-full bg-surface-0" data-theme="dark">
+    <div class="min-h-full bg-surface-0">
       <div class="mx-auto flex min-h-full max-w-5xl flex-col md:flex-row">
         <aside
           class="border-b border-border bg-surface-1 px-4 py-5 md:min-h-screen md:w-56 md:border-b-0 md:border-r"
@@ -28,6 +28,10 @@ import { AuthService } from '../../core/auth/auth.service';
               [routerLinkActiveOptions]="{ exact: true }"
               class="block rounded-xl px-3 py-2.5 font-semibold text-[var(--text-secondary)] no-underline hover:bg-signal-muted/60"
             >
+              Dashboard
+            </a>
+            <a routerLink="/agent/inventory" routerLinkActive="bg-signal-muted text-signal"
+              class="block rounded-xl px-3 py-2.5 font-semibold text-[var(--text-secondary)] no-underline hover:bg-signal-muted/60">
               Vouchers zangu
             </a>
           </nav>
