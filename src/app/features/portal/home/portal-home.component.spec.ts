@@ -102,14 +102,26 @@ describe('PortalHomeComponent expired voucher experience', () => {
     expect(text).toContain('ujh6mzkb');
     expect(text).not.toContain('must-never-be-returned');
     expect(text).not.toContain('bitech-voucher:');
-    expect(fixture.nativeElement.querySelector('#voucher-code')).toBeNull();
+    expect(fixture.nativeElement.querySelector('#voucher-code')).not.toBeNull();
   });
 
   it('returns cleanly to the current package selection', () => {
     const button = Array.from(fixture.nativeElement.querySelectorAll('button'))
-      .find((item: unknown) => (item as HTMLElement).textContent?.includes('Nunua Package')) as HTMLButtonElement;
+      .find((item: unknown) => (item as HTMLElement).textContent?.includes('Nunua kifurushi')) as HTMLButtonElement;
     button.click();
     expect(scrolled).toBeTrue();
+  });
+
+  it('focuses an empty replacement field without discarding the expired session', () => {
+    const input = fixture.nativeElement.querySelector('#voucher-code') as HTMLInputElement;
+    input.scrollIntoView = () => undefined;
+    fixture.componentInstance.voucherCode = 'old-code';
+    fixture.componentInstance.focusVoucher();
+    fixture.detectChanges();
+    expect(fixture.componentInstance.voucherCode).toBe('');
+    expect(document.activeElement).toBe(input);
+    expect(fixture.componentInstance.session()?.session_token).toBe('signed');
+    expect(fixture.nativeElement.textContent).not.toContain('Badilisha site');
   });
 });
 
@@ -156,7 +168,14 @@ describe('PortalHomeComponent entered expired voucher', () => {
     const text = fixture.nativeElement.textContent;
     expect(text).toContain('Muda wa Voucher Umeisha');
     expect(text).toContain('ujh6mzkb');
-    expect(text).toContain('Nunua Package');
+    expect(text).toContain('Nunua kifurushi');
     expect(login).not.toHaveBeenCalled();
+    expect(fixture.nativeElement.querySelector('#voucher-code')).not.toBeNull();
+
+    // A customer can replace an expired code with an agent voucher in the same session.
+    spyOn(portal, 'validateVoucher').and.returnValue(of({ status: 'valid' } as any));
+    fixture.componentInstance.voucherCode = 'AB3K9M2X';
+    fixture.componentInstance.connectWithVoucher();
+    expect(login).toHaveBeenCalledOnceWith('ab3k9m2x', 'ab3k9m2x');
   });
 });

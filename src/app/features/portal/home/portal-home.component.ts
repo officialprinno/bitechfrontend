@@ -44,16 +44,111 @@ import { SkeletonComponent } from '../../../shared/ui/skeleton/skeleton.componen
         </h1>
         <p class="max-w-md text-base text-[var(--text-secondary)]">
           @if (session()?.mode === 'captive') {
-            Chagua kifurushi, lipia kwa simu, uunganishe papo hapo.
+            Ingiza voucher yako au chagua kifurushi kipya.
           } @else {
             Chagua site na kifurushi — unaweza kununua kwa mtu/kifaa kingine.
           }
         </p>
       </div>
 
+      @if (expiredVoucher(); as voucher) {
+        <article
+          class="overflow-hidden rounded-2xl border border-amber-300/70 bg-surface-1 shadow-soft"
+          aria-labelledby="expired-voucher-title"
+        >
+          <div class="border-b border-amber-200 bg-amber-50 px-5 py-5">
+            <div class="flex items-start gap-3">
+              <span class="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-amber-100 text-amber-700" aria-hidden="true">
+                <svg viewBox="0 0 24 24" class="h-6 w-6" fill="none" stroke="currentColor" stroke-width="2">
+                  <circle cx="12" cy="12" r="9" />
+                  <path d="M12 7v5l3 2" />
+                </svg>
+              </span>
+              <div>
+                <p class="text-xs font-bold uppercase tracking-[0.12em] text-amber-700">Voucher imeisha</p>
+                <h2 id="expired-voucher-title" class="mt-1 font-display text-xl font-bold text-ink">
+                  Muda wa Voucher Umeisha
+                </h2>
+                <p class="mt-2 text-sm leading-6 text-[var(--text-secondary)]">
+                  Voucher yako ya <strong class="text-ink">{{ voucher.package_name }}</strong> imefikia mwisho wa muda wake.
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <div class="space-y-5 p-5">
+            <p class="text-sm leading-6 text-ink">
+              Una voucher mpya kutoka kwa wakala? Ingiza code yake hapa chini, au nunua kifurushi kipya.
+            </p>
+            <details>
+            <summary class="cursor-pointer text-sm font-semibold text-signal">Maelezo ya voucher iliyoisha</summary>
+            <dl class="grid grid-cols-1 gap-x-5 gap-y-4 text-sm sm:grid-cols-2">
+              <div><dt class="text-[var(--text-secondary)]">Package</dt><dd class="mt-1 font-semibold text-ink">{{ voucher.package_name }}</dd></div>
+              <div><dt class="text-[var(--text-secondary)]">Ilianza</dt><dd class="mt-1 font-semibold text-ink">{{ voucher.validity_started_at | date: 'd MMM y, h:mm a': '+0300' }}</dd></div>
+              <div><dt class="text-[var(--text-secondary)]">Iliisha</dt><dd class="mt-1 font-semibold text-ink">{{ voucher.expires_at | date: 'd MMM y, h:mm a': '+0300' }}</dd></div>
+              <div><dt class="text-[var(--text-secondary)]">Kifaa</dt><dd class="mt-1 break-words font-semibold text-ink">{{ voucher.device_name || 'Kifaa hakijulikani' }}</dd></div>
+              <div><dt class="text-[var(--text-secondary)]">Voucher</dt><dd class="mt-1 font-mono text-base font-bold tracking-wider text-ink">{{ voucher.code }}</dd></div>
+              @if (voucher.mac_address) {
+                <div><dt class="text-[var(--text-secondary)]">MAC ya kifaa</dt><dd class="mt-1 font-mono text-xs font-semibold text-ink">{{ voucher.mac_address }}</dd></div>
+              }
+            </dl>
+            </details>
+            <div class="flex flex-wrap gap-3">
+              <app-button (click)="focusVoucher()">Nina voucher mpya</app-button>
+              <app-button variant="secondary" (click)="buyAnotherPackage()">Nunua kifurushi</app-button>
+            </div>
+          </div>
+        </article>
+      }
+
+      <div id="voucher-entry" class="scroll-mt-4 rounded-2xl border border-border bg-surface-1/90 p-5 shadow-soft">
+        <h2 class="font-display text-lg font-semibold text-ink">{{ expiredVoucher() ? 'Ingiza voucher mpya' : 'Tayari una voucher?' }}</h2>
+        <p id="voucher-help" class="mt-1 text-sm text-[var(--text-secondary)]">
+          Tumia voucher uliyonunua kwa wakala au mtandaoni kuunganisha kifaa hiki.
+        </p>
+
+        <form class="mt-4 space-y-3" (ngSubmit)="connectWithVoucher()">
+          <label for="voucher-code" class="block text-sm font-semibold text-ink">
+            Code ya voucher
+          </label>
+          <input
+            id="voucher-code"
+            name="voucherCode"
+            type="text"
+            autocomplete="one-time-code"
+            autocapitalize="none"
+            spellcheck="false"
+            aria-describedby="voucher-help voucher-feedback"
+            [attr.aria-invalid]="voucherError() ? 'true' : null"
+            [disabled]="voucherChecking() || bootstrapping()"
+            maxlength="32"
+            required
+            [(ngModel)]="voucherCode"
+            placeholder="Code ya herufi/namba 8"
+            class="min-h-12 w-full rounded-xl border border-border bg-surface-0 px-4 py-3 font-mono text-base tracking-wider text-ink placeholder:text-[var(--text-secondary)] focus:border-signal"
+          />
+          @if (voucherError()) {
+            <p id="voucher-feedback" class="text-sm text-danger" role="alert">{{ voucherError() }}</p>
+          }
+          <app-button type="submit" [loading]="voucherChecking()" [disabled]="bootstrapping() || !session()?.link_login">
+            {{ voucherChecking() ? 'Inahakiki voucher…' : 'Unganisha kwa voucher' }}
+          </app-button>
+        </form>
+
+        @if (bootstrapping()) {
+          <p class="mt-4 text-sm text-[var(--text-secondary)]" role="status">Inaandaa muunganisho wa WiFi…</p>
+        } @else if (!session()?.link_login) {
+          <p class="mt-4 rounded-xl bg-signal-muted px-4 py-3 text-sm text-ink">
+            Ili kutumia voucher, unganisha kifaa hiki kwenye Bitech WiFi, kisha bonyeza
+            “Sign in to Wi-Fi”. Kuchagua eneo hapa chini ni kwa kununua kifurushi;
+            hakuunganishi kifaa chako kwenye WiFi.
+          </p>
+        }
+      </div>
+
       @if (!session() && !bootstrapping()) {
         <div class="space-y-3">
-          <h2 class="font-display text-base font-semibold text-ink">Chagua site (Gift)</h2>
+          <h2 class="font-display text-base font-semibold text-ink">Nunua kifurushi — chagua eneo</h2>
           @if (sitesLoading()) {
             <app-skeleton height="3rem" />
           } @else if (sitesError()) {
@@ -67,7 +162,6 @@ import { SkeletonComponent } from '../../../shared/ui/skeleton/skeleton.componen
                   (click)="selectGiftSite(site)"
                 >
                   <span class="font-display font-semibold text-ink">{{ site.name }}</span>
-                  <span class="mt-1 block text-xs text-[var(--text-secondary)]">{{ site.slug }}</span>
                 </button>
               }
             </div>
@@ -96,6 +190,7 @@ import { SkeletonComponent } from '../../../shared/ui/skeleton/skeleton.componen
 
       @if (session(); as s) {
         <div class="space-y-2">
+          @if (s.mode !== 'captive') {
           <button
             type="button"
             class="text-sm font-semibold text-signal"
@@ -103,6 +198,7 @@ import { SkeletonComponent } from '../../../shared/ui/skeleton/skeleton.componen
           >
             ← Badilisha site
           </button>
+          }
           <div class="rounded-xl border border-border bg-surface-1/80 px-4 py-3 text-sm text-[var(--text-secondary)]">
             Node: <span class="font-semibold text-ink">{{ s.node.node_identifier }}</span>
             ·
@@ -116,89 +212,6 @@ import { SkeletonComponent } from '../../../shared/ui/skeleton/skeleton.componen
             }
           </div>
         </div>
-      }
-
-      @if (expiredVoucher(); as voucher) {
-        <article
-          class="overflow-hidden rounded-2xl border border-amber-300/70 bg-surface-1 shadow-soft"
-          aria-labelledby="expired-voucher-title"
-        >
-          <div class="border-b border-amber-200 bg-amber-50 px-5 py-5">
-            <div class="flex items-start gap-3">
-              <span class="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-amber-100 text-amber-700" aria-hidden="true">
-                <svg viewBox="0 0 24 24" class="h-6 w-6" fill="none" stroke="currentColor" stroke-width="2">
-                  <circle cx="12" cy="12" r="9" />
-                  <path d="M12 7v5l3 2" />
-                </svg>
-              </span>
-              <div>
-                <p class="text-xs font-bold uppercase tracking-[0.12em] text-amber-700">Voucher imeisha</p>
-                <h2 id="expired-voucher-title" class="mt-1 font-display text-xl font-bold text-ink">
-                  Muda wa Voucher Umeisha
-                </h2>
-                <p class="mt-2 text-sm leading-6 text-[var(--text-secondary)]">
-                  Voucher yako ya <strong class="text-ink">{{ voucher.package_name }}</strong> imefikia mwisho wa muda wake.
-                </p>
-              </div>
-            </div>
-          </div>
-
-          <div class="space-y-5 p-5">
-            <dl class="grid grid-cols-1 gap-x-5 gap-y-4 text-sm sm:grid-cols-2">
-              <div><dt class="text-[var(--text-secondary)]">Package</dt><dd class="mt-1 font-semibold text-ink">{{ voucher.package_name }}</dd></div>
-              <div><dt class="text-[var(--text-secondary)]">Ilianza</dt><dd class="mt-1 font-semibold text-ink">{{ voucher.validity_started_at | date: 'd MMM y, h:mm a': '+0300' }}</dd></div>
-              <div><dt class="text-[var(--text-secondary)]">Iliisha</dt><dd class="mt-1 font-semibold text-ink">{{ voucher.expires_at | date: 'd MMM y, h:mm a': '+0300' }}</dd></div>
-              <div><dt class="text-[var(--text-secondary)]">Kifaa</dt><dd class="mt-1 break-words font-semibold text-ink">{{ voucher.device_name || 'Kifaa hakijulikani' }}</dd></div>
-              <div><dt class="text-[var(--text-secondary)]">Voucher</dt><dd class="mt-1 font-mono text-base font-bold tracking-wider text-ink">{{ voucher.code }}</dd></div>
-              @if (voucher.mac_address) {
-                <div><dt class="text-[var(--text-secondary)]">MAC ya kifaa</dt><dd class="mt-1 font-mono text-xs font-semibold text-ink">{{ voucher.mac_address }}</dd></div>
-              }
-            </dl>
-            <p class="rounded-xl bg-surface-0 px-4 py-3 text-sm leading-6 text-ink">
-              Muda wa package yako umeisha. Nunua package nyingine ili kuendelea kutumia Internet.
-            </p>
-            <app-button (click)="buyAnotherPackage()">Nunua Package</app-button>
-          </div>
-        </article>
-      }
-
-      @if (!expiredVoucher()) {
-      <div class="rounded-2xl border border-border bg-surface-1/90 p-5 shadow-soft">
-        <h2 class="font-display text-lg font-semibold text-ink">Tayari una voucher?</h2>
-        <p class="mt-1 text-sm text-[var(--text-secondary)]">
-          Ingiza code yako ili kuunganisha kifaa hiki kwenye WiFi.
-        </p>
-
-        <form class="mt-4 space-y-3" (ngSubmit)="connectWithVoucher()">
-          <label for="voucher-code" class="block text-sm font-semibold text-ink">
-            Code ya voucher
-          </label>
-          <input
-            id="voucher-code"
-            name="voucherCode"
-            type="text"
-            autocomplete="one-time-code"
-            autocapitalize="none"
-            spellcheck="false"
-            maxlength="32"
-            required
-            [(ngModel)]="voucherCode"
-            placeholder="Mfano: ab3k9m2x"
-            class="min-h-12 w-full rounded-xl border border-border bg-surface-0 px-4 py-3 font-mono text-base tracking-wider text-ink placeholder:text-[var(--text-secondary)] focus:border-signal"
-          />
-          @if (voucherError()) {
-            <p class="text-sm text-danger" role="alert">{{ voucherError() }}</p>
-          }
-          <app-button type="submit" [loading]="voucherChecking()">Unganisha kwa voucher</app-button>
-        </form>
-
-        @if (!session()?.link_login) {
-          <p class="mt-4 rounded-xl bg-signal-muted px-4 py-3 text-sm text-ink">
-            Unganisha kwanza kwenye Bitech WiFi, kisha fungua ukurasa huu kupitia login ya WiFi
-            ili kutumia voucher.
-          </p>
-        }
-      </div>
       }
 
       @if (hotspotError()) {
@@ -438,7 +451,16 @@ export class PortalHomeComponent implements OnInit {
     document.getElementById('packages')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }
 
+  focusVoucher(): void {
+    this.voucherCode = '';
+    this.voucherError.set(null);
+    const input = document.getElementById('voucher-code');
+    input?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    input?.focus({ preventScroll: true });
+  }
+
   connectWithVoucher(): void {
+    if (this.voucherChecking() || this.bootstrapping()) return;
     const code = this.voucherCode.trim().toLowerCase();
 
     if (!this.hotspotLogin.canSubmit()) {
