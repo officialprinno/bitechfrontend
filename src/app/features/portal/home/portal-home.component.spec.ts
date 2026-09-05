@@ -5,7 +5,38 @@ import { of } from 'rxjs';
 import { ApiClient } from '../../../core/api/api-client';
 import { PortalSessionService } from '../../../core/portal/portal-session.service';
 import { HotspotLoginService } from '../../../core/portal/hotspot-login.service';
+import { captureHotspotContext } from '../../../core/portal/hotspot-context';
 import { PortalHomeComponent, automaticGiftNode } from './portal-home.component';
+
+describe('PortalHomeComponent captured hotspot bootstrap', () => {
+  afterEach(() => sessionStorage.removeItem('bitech.hotspot.context'));
+
+  it('sends captured values to the API after navigation has removed all query params', () => {
+    captureHotspotContext({
+      location: { href: 'https://bitech.rocksolutions.co.tz/?node_id=buhongwa-01&mac=CE:0B:2D:3E:41:45&ip=192.168.88.70&link-login=http://hotspot.local/login&link-orig=http://example.com/' } as Location,
+      sessionStorage,
+      history: { replaceState: () => undefined } as unknown as History,
+    });
+    const createSession = jasmine.createSpy('createSession').and.returnValue(of({
+      node: { node_identifier: 'buhongwa-01' },
+    }));
+    TestBed.configureTestingModule({ providers: [
+      provideRouter([]),
+      { provide: ActivatedRoute, useValue: { snapshot: { queryParamMap: { get: () => null } } } },
+      { provide: PortalSessionService, useValue: {
+        session: () => null, createSession, loadNodePackages: () => of({ packages: [] }),
+      } },
+      { provide: HotspotLoginService, useValue: {} },
+      { provide: ApiClient, useValue: { getHealthReady: () => of({}) } },
+    ] });
+    const component = TestBed.runInInjectionContext(() => new PortalHomeComponent());
+    component.ngOnInit();
+    expect(createSession).toHaveBeenCalledWith(jasmine.objectContaining({
+      node_id: 'buhongwa-01', mac: 'CE:0B:2D:3E:41:45', ip: '192.168.88.70',
+      link_login: 'http://hotspot.local/login', link_orig: 'http://example.com/', intent: 'self',
+    }));
+  });
+});
 
 describe('automaticGiftNode', () => {
   const node = (id: string) => ({ id, node_identifier: id, display_name: id });

@@ -13,6 +13,7 @@ import {
   PublicGiftNode,
 } from '../../../core/models/portal.model';
 import { HotspotLoginService } from '../../../core/portal/hotspot-login.service';
+import { HotspotContextService } from '../../../core/portal/hotspot-context';
 import { PortalSessionService } from '../../../core/portal/portal-session.service';
 import { ButtonComponent } from '../../../shared/ui/button/button.component';
 import { ErrorStateComponent } from '../../../shared/ui/error-state/error-state.component';
@@ -280,6 +281,7 @@ export class PortalHomeComponent implements OnInit {
   private readonly router = inject(Router);
   private readonly portal = inject(PortalSessionService);
   private readonly hotspotLogin = inject(HotspotLoginService);
+  private readonly hotspotContext = inject(HotspotContextService);
   private readonly api = inject(ApiClient);
 
   readonly session = this.portal.session;
@@ -311,17 +313,20 @@ export class PortalHomeComponent implements OnInit {
   ngOnInit(): void {
     this.refreshHealth();
     const qp = this.route.snapshot.queryParamMap;
+    const stored = this.hotspotContext.read();
+    // A new node in the URL must never inherit another device/node's context.
+    const fallback = !qp.get('node_id') || qp.get('node_id') === stored?.node_id ? stored : null;
     const routerError = qp.get('error') || qp.get('error-orig') || '';
     if (routerError) {
       this.hotspotError.set(this.describeHotspotError(routerError));
     }
     const params = {
-      site_id: qp.get('site_id') || undefined,
-      node_id: qp.get('node_id') || undefined,
-      mac: qp.get('mac') || undefined,
-      ip: qp.get('ip') || undefined,
-      link_login: qp.get('link-login') || qp.get('link_login') || undefined,
-      link_orig: qp.get('link-orig') || qp.get('link_orig') || undefined,
+      site_id: qp.get('site_id') || fallback?.site_id || undefined,
+      node_id: qp.get('node_id') || fallback?.node_id || undefined,
+      mac: qp.get('mac') || fallback?.mac || undefined,
+      ip: qp.get('ip') || fallback?.ip || undefined,
+      link_login: qp.get('link-login') || qp.get('link_login') || fallback?.link_login || undefined,
+      link_orig: qp.get('link-orig') || qp.get('link_orig') || fallback?.link_orig || undefined,
       hotspot_error: routerError || undefined,
     };
 
