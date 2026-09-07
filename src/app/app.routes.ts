@@ -4,6 +4,7 @@ import {
   adminAuthGuard,
   agentAuthGuard,
   guestAuthGuard,
+  superadminGuard,
 } from './core/auth/admin-auth.guard';
 import { PortalShellComponent } from './shared/layouts/portal-shell.component';
 
@@ -15,9 +16,7 @@ export const routes: Routes = [
       {
         path: '',
         loadComponent: () =>
-          import('./features/portal/home/portal-home.component').then(
-            (m) => m.PortalHomeComponent,
-          ),
+          import('./features/portal/home/portal-home.component').then((m) => m.PortalHomeComponent),
         title: 'Bitech WiFi',
       },
       {
@@ -69,6 +68,67 @@ export const routes: Routes = [
       import('./shared/layouts/admin-shell.component').then((m) => m.AdminShellComponent),
     children: [
       {
+        path: 'finance/details',
+        canActivate: [superadminGuard],
+        data: { financeDetail: true },
+        loadComponent: () => import('./features/admin/finance/finance.component').then(m => m.FinanceComponent),
+        title: 'Finance details — Bitech',
+      },
+      ...['sites', 'nodes', 'agents'].map(scope => ({
+        path: `finance/${scope}/:identity`,
+        canActivate: [superadminGuard], data: { financeScope: scope },
+        loadComponent: () => import('./features/admin/finance/finance-scope.component').then(m => m.FinanceScopeComponent),
+        title: 'Financial detail — Bitech',
+      })),
+      {
+        path: 'finance/agents/:identity/statement', canActivate: [superadminGuard],
+        data: { financeScope: 'agents', financeTab: 'statement' },
+        loadComponent: () => import('./features/admin/finance/finance-scope.component').then(m => m.FinanceScopeComponent),
+        title: 'Agent statement — Bitech',
+      },
+      {
+        path: 'finance/agents/:identity/receipts/:receiptId', canActivate: [superadminGuard],
+        data: { financeScope: 'agents' },
+        loadComponent: () => import('./features/admin/finance/finance-scope.component').then(m => m.FinanceScopeComponent),
+        title: 'Receipt detail — Bitech',
+      },
+      {
+        path: 'finance',
+        canActivate: [superadminGuard],
+        loadComponent: () => import('./features/admin/finance/finance.component').then(m => m.FinanceComponent),
+        title: 'Sales & finance — Bitech',
+      },
+      {
+        path: 'nodes/health',
+        loadComponent: () => import('./features/admin/nodes/admin-nodes.component').then(m => m.AdminNodesComponent),
+        title: 'Router Management — Bitech',
+      },
+      ...[
+        'agents',
+        'sites',
+        'nodes',
+        'packages',
+        'customers',
+        'otp-activity',
+        'sms-logs',
+        'webhook-events',
+        'payment-audit',
+        'management-audit',
+        'users',
+        'agent-assignments',
+        'agent-issuances',
+      ].map((resource) => ({
+        path: resource,
+        pathMatch: 'full' as const,
+        data: { resource },
+        canActivate: [superadminGuard],
+        loadComponent: () =>
+          import('./features/admin/management/management.component').then(
+            (m) => m.ManagementComponent,
+          ),
+        title: 'Bitech Administration',
+      })),
+      {
         path: '',
         loadComponent: () =>
           import('./features/admin/dashboard/admin-dashboard.component').then(
@@ -76,30 +136,7 @@ export const routes: Routes = [
           ),
         title: 'Admin — Bitech',
       },
-      {
-        path: 'sites',
-        loadComponent: () =>
-          import('./features/admin/sites/admin-sites.component').then(
-            (m) => m.AdminSitesComponent,
-          ),
-        title: 'Sites — Admin',
-      },
-      {
-        path: 'packages',
-        loadComponent: () =>
-          import('./features/admin/packages/admin-packages.component').then(
-            (m) => m.AdminPackagesComponent,
-          ),
-        title: 'Packages — Admin',
-      },
-      {
-        path: 'nodes',
-        loadComponent: () =>
-          import('./features/admin/nodes/admin-nodes.component').then(
-            (m) => m.AdminNodesComponent,
-          ),
-        title: 'Nodes — Admin',
-      },
+
       {
         path: 'support',
         loadComponent: () =>
@@ -133,7 +170,7 @@ export const routes: Routes = [
         title: 'Payments & Operations — Admin',
       },
       {
-        path: 'agents',
+        path: 'agents/issue',
         loadComponent: () =>
           import('./features/admin/agents/admin-agents.component').then(
             (m) => m.AdminAgentsComponent,
@@ -142,17 +179,26 @@ export const routes: Routes = [
       },
       {
         path: 'agents/:agentId',
-        loadComponent: () => import('./features/admin/agents/admin-agent-detail.component').then((m) => m.AdminAgentDetailComponent),
+        loadComponent: () =>
+          import('./features/admin/agents/admin-agent-detail.component').then(
+            (m) => m.AdminAgentDetailComponent,
+          ),
         title: 'Agent Detail — Admin',
       },
       {
         path: 'agent-batches',
-        loadComponent: () => import('./features/admin/agents/admin-agent-batches.component').then((m) => m.AdminAgentBatchesComponent),
+        loadComponent: () =>
+          import('./features/admin/agents/admin-agent-batches.component').then(
+            (m) => m.AdminAgentBatchesComponent,
+          ),
         title: 'Agent Batches — Admin',
       },
       {
         path: 'agents/:agentId/batches/:batchId',
-        loadComponent: () => import('./features/admin/agents/admin-agent-detail.component').then((m) => m.AdminAgentDetailComponent),
+        loadComponent: () =>
+          import('./features/admin/agents/admin-agent-detail.component').then(
+            (m) => m.AdminAgentDetailComponent,
+          ),
         title: 'Batch Detail — Admin',
       },
     ],

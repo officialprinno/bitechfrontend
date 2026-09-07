@@ -1,0 +1,71 @@
+<section class="finance-page" [attr.aria-busy]="loading">
+  <header class="page-header">
+    <div><p class="eyebrow">BITECH / FINANCE</p><h1>{{ title }}</h1><p>Sales, collections and Agent balances · {{ currency }}</p></div>
+    <div class="actions">@if (isDetail) { <a routerLink="/admin/finance" [queryParams]="{period:period,currency:currency,start:start || null,end:end || null}">← Finance overview</a> }
+      <button type="button" (click)="refresh()" [disabled]="loading">↻ Refresh</button>
+    </div>
+  </header> @if(!loading && !error && meta){<app-finance-export [filters]="exportFilters()" />}
+  <form class="filters panel" (ngSubmit)="apply()" aria-label="Finance filters">
+    <label>Period<select name="period" [(ngModel)]="draft.period">@for (p of periods; track p.key) { <option [value]="p.key">{{ p.label }}</option> }</select></label>
+    @if (draft.period === 'custom') { <label>From<input name="start" type="date" [(ngModel)]="draft.start" required /></label><label>To<input name="end" type="date" [(ngModel)]="draft.end" [min]="draft.start" required /></label> }
+    <label>Currency<select name="currency" [(ngModel)]="draft.currency">@for (code of currencies; track code) { <option [value]="code">{{ code }}</option> }</select></label>
+    <button class="primary" type="submit">Apply filters</button><button type="button" (click)="reset()">Reset</button>
+    @if (validation) { <p class="error-text" role="alert">{{ validation }}</p> }
+  </form>
+  @if (loading) {
+    <div class="loading-grid" role="status" aria-label="Loading finance report">@for (i of [1,2,3,4,5,6]; track i) { <div class="skeleton"></div> }<span class="sr-only">Loading finance report…</span></div>
+  } @else if (error) { <div class="panel error-state" role="alert"><h2>Report unavailable</h2><p>{{ error }}</p><button type="button" (click)="refresh()">Try again</button></div> }
+  @else if (meta) {
+    <div class="report-meta"><span class="badge">P3 · {{ meta.reporting_version }}</span><span>{{ meta.start | date:'dd MMM yyyy':'+0300' }} → {{ meta.flow_end | date:'dd MMM yyyy, HH:mm':'+0300' }} EAT</span><span>Captured {{ meta.captured_at | date:'dd MMM, HH:mm:ss':'+0300' }} EAT</span></div>
+    @if (isDetail && details) {
+      <section class="panel">
+        <div class="section-heading"><div><h2>{{ title }}</h2><p>{{ stockDetail ? 'Balances across all effective history' : 'Matching P3 reporting records' }} · {{ stockDetail ? 'As of' : 'Period ending' }} {{ meta.as_of | date:'dd MMM yyyy, HH:mm':'+0300' }} EAT</p></div>
+          <label>Order<select [ngModel]="query['sort'] || 'newest'" (ngModelChange)="detailSort($event)"><option value="newest">Newest first</option><option value="oldest">Oldest first</option></select></label>
+        </div>
+        @if (meta.detail_total; as t) { <div class="detail-total"><span>{{ t.count }} matching records</span>@if (t.amount !== null) { <strong>{{ t.currency }} {{ number(t.amount) }}</strong><small>Total across all pages</small> }</div> }
+        @if (metric === 'cash_collected') { <p class="inline-links"><a routerLink="/admin/finance/details" [queryParams]="link('customer_cash')">Customer collections →</a><a routerLink="/admin/finance/details" [queryParams]="link('agent_receipts')">Agent receipt details →</a></p> }
+        @if (metric === 'transactions') { <p class="notice">Operational payment status is not financial eligibility. Successful payments may be excluded from authoritative sales when financial evidence or origins are unresolved.</p> }
+        @if (['ready','activated','provisioning_pending','provisioning_failed'].includes(metric)) { <p class="notice">Current inventory at {{ meta.inventory_as_of | date:'dd MMM yyyy, HH:mm':'+0300' }} EAT. Inventory references do not represent sales.</p> }
+        @if (query['site_id'] || query['node_id'] || query['agent_id']) { <p class="muted">Origin filter: {{ query['site_id'] || query['node_id'] || query['agent_id'] }}</p> }
+        <app-finance-table [response]="details" [columns]="detailColumns" [label]="title" (pageChange)="page('page', $event)" />
+      </section>
+    } @else if (summary) {
+      @if (summary.data_quality.excluded_count > 0) { <aside class="notice"><strong>Financial evidence disclosure</strong><p>Some records are excluded from authoritative financial totals because financial eligibility or required evidence is unresolved. {{ summary.data_quality.excluded_count }} excluded records remain visible in data quality.</p></aside> }
+      <div class="section-heading"><h2>Financial overview</h2><span class="muted">One currency · backend-authoritative values</span></div>
+      <div class="kpi-grid">
+        @for (card of cards; track card.key; let first = $first) {
+          <a class="kpi" [class.hero-kpi]="first" routerLink="/admin/finance/details" [queryParams]="link(card.metric)" [attr.title]="card.help">
+            <span class="kpi-label">{{ card.label }} <span aria-hidden="true">↗</span></span><strong><small>{{ currency }}</small> {{ number(total[card.key]) }}</strong>
+            <span class="kpi-time">@if (card.stock) { As of {{ meta.as_of | date:'dd MMM, HH:mm':'+0300' }} EAT } @else { For selected period }</span>
+            <span class="definition">{{ card.help }}</span>
+          </a>
+        }
+      </div>
+      <div class="cash-note"><span>Customer cash <strong>{{ currency }} {{ number(total['customer_cash']) }}</strong></span><a routerLink="/admin/finance/details" [queryParams]="link('agent_receipts')">Agent cash received <strong>{{ currency }} {{ number(total['agent_cash_received']) }}</strong> →</a><span>Receivables include obligations from earlier periods. Zero outstanding means clear; credit remains separate.</span></div>
+      <section class="panel"><div class="section-heading"><div><h2>Customer payment activity</h2><p>Payments created during the selected period. SUCCESS does not automatically count as a sale.</p></div><span class="badge">{{ summary.data_quality.eligible_count }} eligible sales</span></div>
+        <div class="compact-grid">@for (card of operational; track card.key) { <a class="mini-card" routerLink="/admin/finance/details" [queryParams]="link('transactions', {customer_status:card.key})"><span>{{ card.label }}</span><strong>{{ number(count(card.key)) }}</strong><small>View payments →</small></a> }</div>
+      </section>
+      <section class="panel"><div class="section-heading"><div><h2>Voucher inventory</h2><p>Current stock · {{ meta.inventory_as_of | date:'dd MMM, HH:mm':'+0300' }} EAT. Activation is separate from sales.</p></div></div>
+        <div class="compact-grid">@for (card of inventoryCards; track card.key) { <a class="mini-card" routerLink="/admin/finance/details" [queryParams]="link(card.key)"><span>{{ card.label }}</span><strong>{{ number(inventory[card.key]) }}</strong><small>View inventory →</small></a> }</div>
+      </section>
+      @for (table of performance; track table.key) {
+        <section class="panel"><div class="section-heading"><div><h2>{{ table.title }}</h2><p>{{ currency }} · Sales and cash for selected period; outstanding as of {{ meta.as_of | date:'dd MMM, HH:mm':'+0300' }} EAT.</p></div>
+          <label>Sort<select [ngModel]="query[table.key + '_sort'] || table.sort" (ngModelChange)="sort(table.key, $event)"><option [value]="table.sort">Sales, highest first</option><option [value]="table.key === 'agents' ? '-outstanding' : '-agent_outstanding'">Outstanding, highest first</option><option value="name">Name A–Z</option></select></label>
+        </div><app-finance-table [response]="tables[table.key]" [columns]="table.columns" [label]="table.title" [query]="tableQuery()" [entityType]="table.key" [identityKey]="table.identity" (pageChange)="page(table.key + '_page', $event)" /></section>
+      }
+      <section class="panel"><div class="section-heading"><div><h2>Daily sales & collections</h2><p>Backend daily totals in Africa/Dar_es_Salaam · {{ currency }}. Days without activity are omitted.</p></div></div><app-finance-table [response]="trends" [columns]="trendColumns" label="Daily sales and collections" /></section>
+      <div class="health-grid">
+        <section class="panel"><div class="section-heading"><h2>Financial data quality</h2><span class="badge" [class.review]="summary.data_quality.excluded_count > 0">{{ summary.data_quality.excluded_count ? 'Exclusions present' : 'No exclusions' }}</span></div>
+          <dl class="quality-list"><div><dt>Eligible customer records</dt><dd>{{ summary.data_quality.eligible_count }}</dd></div><div><dt>Excluded customer records</dt><dd>{{ summary.data_quality.excluded_count }}</dd></div><div><dt>Excluded successful records</dt><dd>{{ summary.data_quality.excluded_success_count }}</dd></div><div><dt>Source unresolved</dt><dd>{{ summary.data_quality.distinct_record_counts['source_unknown'] }}</dd></div><div><dt>Evidence review</dt><dd>{{ summary.data_quality.distinct_record_counts['evidence_review'] }}</dd></div><div><dt>Origin unresolved</dt><dd>{{ summary.data_quality.distinct_record_counts['origin_unresolved'] }}</dd></div></dl><p class="muted">Quality categories may overlap. Excluded amounts are not lost revenue.</p>
+          @for (legacy of summary.legacy_unposted.currencies; track $index) { <div class="notice"><strong>Legacy Declared — Not Posted</strong><p>{{ legacy['currency'] }} {{ number(legacy['amount']) }} · {{ legacy['count'] }} batches. Excluded from receivables until an approved opening obligation is posted.</p></div> }
+        </section>
+        @if (reconciliation) { <section class="panel"><div class="section-heading"><h2>Finance reconciliation</h2><span class="badge" [class.review]="reconciliation.status === 'REVIEW'">{{ reconciliation.status }}</span></div><p>Read-only checks of sales, receipts, ledger balances and cash attribution.</p>
+          <ul class="checks">@for (check of reconciliation.checks; track $index) { <li><span>{{ check.check_code.replaceAll('_', ' ') }}</span><strong [class.error-text]="check.status === 'REVIEW'">{{ check.status }}@if (check.status === 'REVIEW') { · {{ check.currency }} {{ number(check.difference) }} }</strong></li> }</ul>
+          @for (cash of reconciliation.cash_attribution; track $index) { <p class="muted">Unattributed Agent cash: {{ cash['currency'] }} {{ number(cash['unallocated_site_cash']) }} by site · {{ number(cash['unallocated_node_cash']) }} by node.</p> }
+        </section> }
+      </div>
+      <footer class="muted">P3 reporting contract {{ meta.reporting_version }} · Read-only finance reporting · All times EAT</footer>
+    }
+  }
+</section>
+

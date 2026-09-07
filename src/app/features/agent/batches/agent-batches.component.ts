@@ -1,3 +1,4 @@
+import { VoucherCardComponent, VoucherSummaryComponent } from '../../../shared/ui/voucher-card.component';
 import { DecimalPipe, DatePipe } from '@angular/common';
 import { Component, OnInit, computed, inject, signal } from '@angular/core';
 import { ActivatedRoute, RouterLink } from '@angular/router';
@@ -100,7 +101,7 @@ interface PrintInfo {
 @Component({
   selector: 'app-agent-batches',
   standalone: true,
-  imports: [RouterLink, DecimalPipe, DatePipe, ErrorStateComponent, SkeletonComponent],
+  imports: [VoucherCardComponent, VoucherSummaryComponent, RouterLink, DecimalPipe, DatePipe, ErrorStateComponent, SkeletonComponent],
   template: `
     <section class="space-y-6">
       @if (detailId()) {
@@ -136,6 +137,7 @@ interface PrintInfo {
                   TZS {{ b.total_amount | number: '1.0-0' }}
                 </span>
               </div>
+              <app-voucher-summary [items]="b.items" />
               @if (printInfo(); as info) {
                 <div class="rounded-2xl border border-border bg-surface-1 p-4 text-sm">
                   <p class="font-semibold text-ink">Printable inventory</p>
@@ -164,40 +166,9 @@ interface PrintInfo {
                   }
                 </div>
               }
-              <ul class="grid gap-3 sm:grid-cols-2">
+              <ul class="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
                 @for (item of b.items; track item.line_no) {
-                  <li class="flex min-h-48 flex-wrap items-center justify-between gap-4 rounded-2xl border border-border bg-surface-1 p-4 text-sm shadow-soft">
-                    <div>
-                      <p class="font-mono text-signal">{{ item.voucher_code || 'pending…' }}</p>
-                      @if (item.voucher_password && item.voucher_password !== item.voucher_code) {
-                        <p class="font-mono text-xs text-ink">Password: {{ item.voucher_password }}</p>
-                      }
-                      <p class="text-xs text-[var(--text-secondary)]">
-                        {{ item.package_name || b.package_name_snapshot }}
-                      </p>
-                      @if (item.is_used) {
-                        <p class="mt-1 text-xs text-signal">Imetumika</p>
-                        <p class="font-mono text-xs text-[var(--text-secondary)]">
-                          MAC: {{ item.mac_address || '—' }}
-                        </p>
-                        <p class="text-xs text-ink">
-                          Kifaa: {{ item.device_name || 'Hakijulikani' }}
-                        </p>
-                      } @else {
-                        <p class="mt-1 text-xs text-[var(--text-secondary)]">Haijatumika</p>
-                      }
-                    </div>
-                    @if (item.barcode_svg) {
-                      <img [src]="item.barcode_svg" [alt]="'Barcode ya ' + item.voucher_code" class="h-16 max-w-52 rounded-xl border border-border bg-white p-2" />
-                    }
-                    <div class="text-right text-xs text-[var(--text-secondary)]">
-                      <p class="font-semibold text-ink">{{ lifecycleLabel(item) }}</p>
-                      <p>{{ policyLabel(item.activation_policy) }}</p>
-                      @if (item.amount) {
-                        <p>TZS {{ item.amount | number: '1.0-0' }}</p>
-                      }
-                    </div>
-                  </li>
+                  <li><app-voucher-card [voucher]="item" [number]="item.line_no" [packageName]="item.package_name || b.package_name_snapshot" /></li>
                 }
               </ul>
             </div>

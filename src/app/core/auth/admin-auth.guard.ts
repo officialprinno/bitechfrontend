@@ -38,3 +38,10 @@ export const agentAuthGuard: CanActivateFn = () => {
 
 export const guestAdminGuard = guestAuthGuard;
 export const guestAgentGuard = guestAuthGuard;
+
+export const superadminGuard: CanActivateFn = () => {
+  const auth = inject(AuthService);
+  const router = inject(Router);
+  return auth.isAuthenticated() && auth.user()?.role === 'superadmin'
+    ? true : router.createUrlTree(['/admin']);
+};

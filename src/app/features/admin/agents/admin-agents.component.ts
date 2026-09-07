@@ -414,7 +414,7 @@ interface VoucherRow {
             <span>
               <span class="block font-semibold text-ink">Lipa vouchers zote sasa</span>
               <span class="mt-1 block text-sm text-[var(--text-secondary)]">
-                Batches zote zinahesabiwa kama zimelipwa.
+                Rekodi ushahidi wa fedha ulizopokea. Receipt itaunganishwa na charges za batch hii.
               </span>
             </span>
           </label>
@@ -431,11 +431,37 @@ interface VoucherRow {
             <span>
               <span class="block font-semibold text-ink">Toa bila kulipa sasa (rekodi deni)</span>
               <span class="mt-1 block text-sm text-[var(--text-secondary)]">
-                Codes zinatengenezwa; settle baadaye kutoka hapa.
+                Charge itarekodiwa. Malipo yatathibitishwa kwa receipt na kiasi kilicholipia batch.
               </span>
             </span>
           </label>
         </fieldset>
+
+        @if (issueForm.controls.settlement_mode.value === 'pay_all') {
+          <fieldset class="grid gap-4 rounded-2xl border border-border p-4 sm:grid-cols-2">
+            <legend class="px-2 font-semibold">Ushahidi wa malipo yaliyopokelewa</legend>
+            <label class="grid gap-2">Njia ya malipo
+              <select formControlName="receipt_method" class="rounded-xl border border-border bg-surface-1 p-3">
+                <option value="cash">Cash</option><option value="bank_transfer">Bank transfer</option>
+                <option value="mobile_money">Mobile money</option><option value="other">Other</option>
+              </select>
+            </label>
+            <label class="grid gap-2">Tarehe na saa ya kupokea
+              <input type="datetime-local" formControlName="receipt_received_at" class="rounded-xl border border-border bg-surface-1 p-3" />
+            </label>
+            @if (issueForm.controls.receipt_method.value !== 'cash') {
+              <label class="grid gap-2">Reference ya muamala
+                <input formControlName="receipt_reference" maxlength="120" class="rounded-xl border border-border bg-surface-1 p-3" />
+              </label>
+              <label class="grid gap-2">Benki/provider na akaunti iliyopokea
+                <input formControlName="receipt_scope" maxlength="80" class="rounded-xl border border-border bg-surface-1 p-3" />
+              </label>
+            }
+            <label class="grid gap-2 sm:col-span-2">Maelezo ya uthibitisho wa fedha
+              <textarea formControlName="receipt_notes" maxlength="500" rows="2" class="rounded-xl border border-border bg-surface-1 p-3"></textarea>
+            </label>
+          </fieldset>
+        }
 
         @if (issueTotal(); as total) {
           <p class="text-sm text-[var(--text-secondary)]">
@@ -638,14 +664,7 @@ interface VoucherRow {
                 <div class="flex items-center gap-3">
                   <a [routerLink]="['/admin/agents', b.agent, 'batches', b.id]" class="rounded-xl border border-border px-3 py-2 text-xs font-semibold text-signal no-underline">View vouchers</a>
                   @if (b.settlement_status === 'unpaid') {
-                    <button
-                      type="button"
-                      class="rounded-xl bg-signal px-3 py-2 text-xs font-semibold text-[var(--text-inverse)] disabled:opacity-60"
-                      [disabled]="settlingId() === b.id"
-                      (click)="settle(b.id)"
-                    >
-                      Settle
-                    </button>
+                    <span class="text-sm text-[var(--text-secondary)]">Inasubiri malipo yaliyothibitishwa</span>
                   }
                   <button
                     type="button"
@@ -873,7 +892,6 @@ export class AdminAgentsComponent implements OnInit {
   readonly vouchersLoading = signal(true);
   readonly creating = signal(false);
   readonly issuing = signal(false);
-  readonly settlingId = signal<string | null>(null);
   readonly togglingId = signal<string | null>(null);
   readonly listError = signal<string | null>(null);
   readonly formError = signal<string | null>(null);
@@ -903,6 +921,11 @@ export class AdminAgentsComponent implements OnInit {
   });
 
   readonly issueForm = this.fb.nonNullable.group({
+    receipt_method: ['cash'],
+    receipt_received_at: [''],
+    receipt_reference: [''],
+    receipt_scope: [''],
+    receipt_notes: [''],
     agent_id: ['', Validators.required],
     node_id: ['', Validators.required],
     lines: this.fb.array([this.newIssueLine()]),
@@ -1040,6 +1063,11 @@ export class AdminAgentsComponent implements OnInit {
 
   canIssue(): boolean {
     if (this.issuing()) return false;
+    const evidence = this.issueForm.getRawValue();
+    if (evidence.settlement_mode === 'pay_all') {
+      if (!evidence.receipt_received_at || evidence.receipt_notes.trim().length < 3) return false;
+      if (evidence.receipt_method !== 'cash' && (evidence.receipt_reference.trim().length < 3 || evidence.receipt_scope.trim().length < 3)) return false;
+    }
     const agentId = String(this.issueForm.controls.agent_id.value || '');
     const nodeId = String(this.issueForm.controls.node_id.value || '');
     if (!agentId || !nodeId) return false;
@@ -1150,6 +1178,12 @@ export class AdminAgentsComponent implements OnInit {
         agent_id: v.agent_id,
         node_id: v.node_id,
         settlement_mode: v.settlement_mode,
+        ...(v.settlement_mode === 'pay_all' ? { receipt: {
+          amount: String(this.issueTotal()), currency: 'TZS', payment_method: v.receipt_method,
+          received_at: new Date(v.receipt_received_at).toISOString(), notes: v.receipt_notes,
+          reference: v.receipt_method === 'cash' ? '' : v.receipt_reference,
+          reference_scope: v.receipt_method === 'cash' ? '' : v.receipt_scope,
+        }} : {}),
         lines,
       }, { 'Idempotency-Key': this.issuanceKey })
       .subscribe({
@@ -1171,20 +1205,6 @@ export class AdminAgentsComponent implements OnInit {
           this.issuing.set(false);
         },
       });
-  }
-
-  settle(id: string): void {
-    this.settlingId.set(id);
-    this.api.post<BatchRow>(`/admin/agent-batches/${id}/settle/`, {}).subscribe({
-      next: () => {
-        this.settlingId.set(null);
-        this.reloadBatches();
-        this.reloadDebts();
-        this.reloadVouchers();
-        this.reloadAgents();
-      },
-      error: () => this.settlingId.set(null),
-    });
   }
 
   toggleActive(agent: AgentRow): void {

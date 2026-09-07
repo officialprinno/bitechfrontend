@@ -59,23 +59,23 @@ interface Dashboard {
           {{ d.role }} · {{ d.scope.site_count }} site(s)
         </p>
         <div class="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-          <a class="card" routerLink="/admin/agents" [queryParams]="{status:'active'}"><span>Active agents</span><strong>{{ d.resources['active_agents'] }}</strong></a>
-          <a class="card" routerLink="/admin/reports" [queryParams]="{kind:'assignments',status:'active',scope:'current'}"><span>Active assignments</span><strong>{{ d.assignments.active }}</strong></a>
+          <a class="card" routerLink="/admin/agents" [queryParams]="{status:'active',assigned:'active'}"><span>Active agents</span><strong>{{ d.resources['active_agents'] }}</strong></a>
+          <a class="card" routerLink="/admin/agent-assignments" [queryParams]="{status:'active',scope:'current'}"><span>Active assignments</span><strong>{{ d.assignments.active }}</strong></a>
           <a class="card" routerLink="/admin/nodes" [queryParams]="{status:'offline',active:'true'}"><span>Nodes offline</span><strong class="text-danger">{{ d.resources['offline_nodes'] }}</strong></a>
           <a class="card" routerLink="/admin/operations" [queryParams]="{tab:'provisioning',status:'pending',range:selectedRange()}"><span>Provisioning pending</span><strong>{{ d.vouchers['provisioning_pending'] }}</strong></a>
-          <a class="card" routerLink="/admin/reports" [queryParams]="{kind:'inventory',lifecycle:'ready',range:selectedRange()}"><span>Vouchers ready</span><strong class="text-success">{{ d.vouchers['ready'] }}</strong></a>
-          <a class="card" routerLink="/admin/reports" [queryParams]="{kind:'inventory',lifecycle:'activated',range:selectedRange()}"><span>Activated</span><strong>{{ d.vouchers['activated'] }}</strong></a>
-          <a class="card" routerLink="/admin/reports" [queryParams]="{kind:'inventory',lifecycle:'expired',range:selectedRange()}"><span>Expired</span><strong>{{ d.vouchers['expired'] }}</strong></a>
-          <a class="card" routerLink="/admin/reports" [queryParams]="{kind:'inventory',lifecycle:'revoked',range:selectedRange()}"><span>Revoked</span><strong>{{ d.vouchers['revoked'] }}</strong></a>
+          <a class="card" routerLink="/admin/support" [queryParams]="{source:null,lifecycle:'ready',range:selectedRange()}"><span>Vouchers ready</span><strong class="text-success">{{ d.vouchers['ready'] }}</strong></a>
+          <a class="card" routerLink="/admin/support" [queryParams]="{source:null,lifecycle:'activated',range:selectedRange()}"><span>Activated</span><strong>{{ d.vouchers['activated'] }}</strong></a>
+          <a class="card" routerLink="/admin/support" [queryParams]="{source:null,lifecycle:'expired',range:selectedRange()}"><span>Expired</span><strong>{{ d.vouchers['expired'] }}</strong></a>
+          <a class="card" routerLink="/admin/support" [queryParams]="{source:null,lifecycle:'revoked',range:selectedRange()}"><span>Revoked</span><strong>{{ d.vouchers['revoked'] }}</strong></a>
           <a class="card" routerLink="/admin/operations" [queryParams]="{tab:'provisioning',status:'failed',range:selectedRange()}"><span>Provisioning failed</span><strong class="text-danger">{{ d.vouchers['provisioning_failed'] }}</strong></a>
-          <a class="card" routerLink="/admin/reports" [queryParams]="{kind:'issuance',range:selectedRange()}"><span>Issuance requests</span><strong>{{ d.issuance['requests'] }}</strong></a>
-          <a class="card" routerLink="/admin/reports" [queryParams]="{kind:'issuance',range:selectedRange()}"><span>Requested inventory</span><strong>{{ d.issuance['requested_quantity'] }}</strong></a>
-          <a class="card" routerLink="/admin/reports" [queryParams]="{kind:'assignments',status:'suspended',scope:'current'}"><span>Suspended assignments</span><strong>{{ d.assignments.suspended }}</strong></a>
+          <a class="card" routerLink="/admin/agent-issuances" [queryParams]="{range:selectedRange()}"><span>Issuance requests</span><strong>{{ d.issuance['requests'] }}</strong></a>
+          <a class="card" routerLink="/admin/agent-issuances" [queryParams]="{range:selectedRange()}"><span>Requested inventory</span><strong>{{ d.issuance['requested_quantity'] }}</strong></a>
+          <a class="card" routerLink="/admin/agent-assignments" [queryParams]="{status:'suspended',scope:'current'}"><span>Suspended assignments</span><strong>{{ d.assignments.suspended }}</strong></a>
           <a class="card" routerLink="/admin/operations" [queryParams]="{tab:'router-enforcement',status:'open'}"><span>Router jobs open</span><strong>{{ d.operations['expiry_enforcement_open'] + d.operations['revocation_enforcement_open'] }}</strong></a>
         </div>
 
         @if (d.customer_payments; as payments) {
-          <a routerLink="/admin/operations" class="summary-link block rounded-2xl border border-border bg-surface-1 p-5 shadow-soft">
+          <a routerLink="/admin/operations" [queryParams]="{tab:'payments',source:'customer',status:'success',succeeded_from:d.range.from,succeeded_to:d.range.to}" class="summary-link block rounded-2xl border border-border bg-surface-1 p-5 shadow-soft">
             <h2 class="font-display font-semibold">Customer payments only</h2>
             <p class="mt-2 text-2xl font-bold text-signal">TZS {{ payments.amount | number: '1.0-0' }}</p>
             <p class="text-sm text-[var(--text-secondary)]">
@@ -103,7 +103,7 @@ interface Dashboard {
     .card::after { position:absolute; right:1rem; top:50%; content:'→'; color:var(--brand-signal); font-size:1.1rem; transform:translateY(-50%); }
     .card:hover { transform:translateY(-2px); border-color:var(--brand-signal); box-shadow:0 10px 26px rgb(11 31 42 / 16%); }
     .card:focus-visible, .summary-link:focus-visible { outline:3px solid var(--brand-signal); outline-offset:3px; }
-    .card span { font-size:.75rem; text-transform:uppercase; letter-spacing:.04em; color:var(--text-secondary); }
+    .card span { font-size:.875rem; text-transform:uppercase; letter-spacing:.04em; color:var(--text-secondary); }
     .card strong { color:var(--text-primary); font-family:var(--font-display); font-size:1.75rem; line-height:1.1; }
     .card strong.text-danger { color:var(--danger); }
     .card strong.text-success { color:var(--success); }

@@ -1,3 +1,4 @@
+import { ActivatedRoute, Router } from '@angular/router';
 import { DatePipe } from '@angular/common';
 import { Component, OnInit, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
@@ -246,7 +247,7 @@ interface SearchResult {
                     <td class="px-2 py-3 text-xs text-[var(--text-secondary)]">
                       <p>
                         Ilianza:
-                        {{ (v.validity_started_at || v.session_started_at) | date: 'medium' }}
+                        {{ v.validity_started_at || v.session_started_at | date: 'medium' }}
                       </p>
                       <p>Inaisha: {{ v.expires_at ? (v.expires_at | date: 'medium') : '—' }}</p>
                       @if (v.is_online) {
@@ -274,7 +275,9 @@ interface SearchResult {
                         [class]="
                           v.usage_status === 'active' || v.usage_status === 'in_use'
                             ? 'text-success'
-                            : v.usage_status === 'in_use_expired' || v.status === 'expired' || v.status === 'failed'
+                            : v.usage_status === 'in_use_expired' ||
+                                v.status === 'expired' ||
+                                v.status === 'failed'
                               ? 'text-danger'
                               : 'text-signal'
                         "
@@ -304,11 +307,19 @@ interface SearchResult {
           </div>
         </div>
       }
+      <nav class="flex items-center justify-end gap-3 text-sm">
+        <button [disabled]="page <= 1" (click)="move(-1)">Previous</button
+        ><span>Page {{ page }} · {{ count() }} vouchers</span
+        ><button [disabled]="page * 25 >= count()" (click)="move(1)">Next</button>
+      </nav>
     </section>
   `,
 })
 export class AdminSupportComponent implements OnInit {
   private readonly api = inject(ApiClient);
+  private readonly route = inject(ActivatedRoute);
+  private readonly router = inject(Router);
+  page = 1;
 
   phone = '';
   code = '';
@@ -324,7 +335,22 @@ export class AdminSupportComponent implements OnInit {
   readonly results = signal<VoucherRow[]>([]);
 
   ngOnInit(): void {
-    this.loadRecent();
+    this.route.queryParamMap.subscribe((p) => {
+      this.phone = p.get('phone') || '';
+      this.code = p.get('code') || '';
+      this.mac = p.get('mac') || '';
+      this.dateFrom = p.get('purchased_from') || '';
+      this.dateTo = p.get('purchased_to') || '';
+      this.page = Math.max(1, Number(p.get('page')) || 1);
+      const source = p.get('source');
+      this.source.set(source === 'agent' || source === 'portal' ? source : 'all');
+      const params: Record<string, string | number | undefined> = {
+        page: this.page,
+        page_size: 25,
+      };
+      p.keys.forEach((key) => (params[key] = p.get(key) || undefined));
+      this.fetch(params);
+    });
   }
 
   formatSpeed(value: number): string {
@@ -336,7 +362,7 @@ export class AdminSupportComponent implements OnInit {
 
   setSource(s: 'all' | 'portal' | 'agent'): void {
     this.source.set(s);
-    this.loadRecent();
+    this.search();
   }
 
   clearAndRecent(): void {
@@ -345,40 +371,31 @@ export class AdminSupportComponent implements OnInit {
     this.mac = '';
     this.dateFrom = '';
     this.dateTo = '';
-    this.loadRecent();
+    this.router.navigate([], { relativeTo: this.route, queryParams: {} });
   }
 
   search(): void {
-    const hasFilter = !!(
-      this.phone.trim() ||
-      this.code.trim() ||
-      this.mac.trim() ||
-      this.dateFrom ||
-      this.dateTo
-    );
-    if (!hasFilter) {
-      this.loadRecent();
-      return;
-    }
-    this.fetch({
-      phone: this.phone.trim() || undefined,
-      code: this.code.trim() || undefined,
-      mac: this.mac.trim() || undefined,
-      purchased_from: this.dateFrom || undefined,
-      purchased_to: this.dateTo || undefined,
-      source: this.source() === 'all' ? undefined : this.source(),
-      page_size: 50,
+    this.router.navigate([], {
+      relativeTo: this.route,
+      queryParams: {
+        phone: this.phone || null,
+        code: this.code || null,
+        mac: this.mac || null,
+        purchased_from: this.dateFrom || null,
+        purchased_to: this.dateTo || null,
+        source: this.source() === 'all' ? null : this.source(),
+        page: 1,
+      },
+      queryParamsHandling: 'merge',
     });
   }
-
-  private loadRecent(): void {
-    this.fetch({
-      recent: '1',
-      source: this.source() === 'all' ? undefined : this.source(),
-      page_size: 50,
+  move(delta: number): void {
+    this.router.navigate([], {
+      relativeTo: this.route,
+      queryParams: { page: this.page + delta },
+      queryParamsHandling: 'merge',
     });
   }
-
   private fetch(params: Record<string, string | number | undefined>): void {
     this.error.set(null);
     this.loading.set(true);

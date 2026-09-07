@@ -41,7 +41,7 @@ import { AuthService } from '../../core/auth/auth.service';
               {{ auth.user()?.display_name || auth.user()?.username }}
             </p>
             <p class="mt-1 font-mono">{{ auth.user()?.agent_code }}</p>
-            <p class="mt-3 text-[11px] leading-relaxed">
+            <p class="mt-3 text-xs leading-relaxed">
               Vouchers hutolewa na admin. Hapa unaona codes zilizokabidhiwa.
             </p>
             <button

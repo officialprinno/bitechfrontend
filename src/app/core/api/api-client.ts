@@ -6,11 +6,45 @@ import { environment } from '../../../environments/environment';
 import { ApiEnvelope, HealthLiveData, HealthReadyData } from '../models/api.model';
 
 export type QueryParams = Record<string, string | number | boolean | null | undefined>;
+export interface PageResult<T> {
+  rows: T[];
+  count: number;
+  page: number;
+  pageSize: number;
+  next: boolean;
+}
 
 @Injectable({ providedIn: 'root' })
 export class ApiClient {
   private readonly http = inject(HttpClient);
   private readonly baseUrl = environment.apiBaseUrl.replace(/\/$/, '');
+
+  getPage<T>(path: string, params?: QueryParams): Observable<PageResult<T>> {
+    return this.http.get<ApiEnvelope<T[]>>(this.url(path), { params: this.toParams(params) }).pipe(
+      map((envelope) => {
+        const rows = this.unwrap(envelope);
+        const pagination = (
+          envelope.meta as
+            | {
+                pagination?: {
+                  count: number;
+                  page: number;
+                  page_size: number;
+                  next: string | null;
+                };
+              }
+            | undefined
+        )?.pagination;
+        return {
+          rows,
+          count: pagination?.count ?? rows.length,
+          page: pagination?.page ?? 1,
+          pageSize: pagination?.page_size ?? rows.length,
+          next: !!pagination?.next,
+        };
+      }),
+    );
+  }
 
   get<T>(path: string, params?: QueryParams, headers?: Record<string, string>): Observable<T> {
     return this.http
@@ -74,7 +108,9 @@ export class ApiClient {
 
   private unwrap<T>(envelope: ApiEnvelope<T>): T {
     if (envelope == null || typeof envelope !== 'object') {
-      throw new Error('API ilirudisha jibu lisilo sahihi (si JSON). Hakikisha Django inaendesha kwenye :8000.');
+      throw new Error(
+        'API ilirudisha jibu lisilo sahihi (si JSON). Hakikisha Django inaendesha kwenye :8000.',
+      );
     }
     if (!envelope.success) {
       throw new Error(envelope.error?.message ?? 'Ombi limeshindikana.');

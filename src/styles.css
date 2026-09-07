@@ -22,9 +22,12 @@
   --danger: #b42318;
   --focus-ring: #0e8f8b;
 
-  --font-display: "Sora", system-ui, sans-serif;
-  --font-body: "Manrope", system-ui, sans-serif;
-  --font-mono: "IBM Plex Mono", ui-monospace, monospace;
+  /* Native UI fonts stay readable even before hotspot Internet access is granted. */
+  --type-family-sans: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --type-family-mono: ui-monospace, "Cascadia Code", "SFMono-Regular", Consolas, monospace;
+  --font-display: var(--type-family-sans);
+  --font-body: var(--type-family-sans);
+  --font-mono: var(--type-family-mono);
 
   --radius-xl: 0.75rem;
   --radius-2xl: 1rem;
@@ -68,9 +71,16 @@ html.dark,
   --color-success: var(--success);
   --color-warning: var(--warning);
   --color-danger: var(--danger);
-  --font-display: var(--font-display);
-  --font-sans: var(--font-body);
-  --font-mono: var(--font-mono);
+  --font-display: var(--type-family-sans);
+  --font-sans: var(--type-family-sans);
+  --font-mono: var(--type-family-mono);
+  /* Shared scale applies to customer, agent and admin Tailwind templates. */
+  --text-xs: 0.875rem;
+  --text-xs--line-height: 1.5;
+  --text-sm: 1rem;
+  --text-sm--line-height: 1.5;
+  --text-base: 1rem;
+  --text-base--line-height: 1.625;
   --radius-xl: var(--radius-xl);
   --radius-2xl: var(--radius-2xl);
   --shadow-soft: var(--shadow-soft);
@@ -85,6 +95,9 @@ html.dark,
   body {
     margin: 0;
     font-family: var(--font-body);
+    font-size: 1rem;
+    line-height: 1.6;
+    font-weight: 400;
     color: var(--text-primary);
     background:
       radial-gradient(1200px 600px at 10% -10%, rgb(14 143 139 / 12%), transparent 55%),
@@ -100,10 +113,23 @@ html.dark,
     opacity: 1;
   }
 
-  label,
+  input,
+  select,
+  textarea,
+  button {
+    font-family: inherit;
+  }
+
+  input:not([type="checkbox"]):not([type="radio"]),
+  select,
+  textarea {
+    font-size: 1rem;
+    line-height: 1.5;
+  }
+
   th,
-  dt {
-    text-rendering: geometricPrecision;
+  td {
+    font-variant-numeric: tabular-nums;
   }
 
   *:focus-visible {

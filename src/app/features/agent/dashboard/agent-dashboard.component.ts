@@ -57,7 +57,7 @@ interface AgentDashboard {
     .card { position:relative; display:flex; min-height:6.25rem; flex-direction:column; gap:.5rem; border:1px solid var(--border-subtle); border-radius:1rem; background:var(--surface-1); padding:1rem 2.5rem 1rem 1rem; color:var(--text-primary); text-decoration:none; box-shadow:var(--shadow-soft); cursor:pointer; transition:transform var(--motion-fast) var(--motion-ease), border-color var(--motion-fast), box-shadow var(--motion-fast); }
     .card::after { position:absolute; right:1rem; top:50%; content:'→'; color:var(--brand-signal); font-size:1.1rem; transform:translateY(-50%); }
     .card:hover { transform:translateY(-2px); border-color:var(--brand-signal); box-shadow:0 10px 26px rgb(0 0 0 / 25%); }
-    .card span { font-size:.75rem; text-transform:uppercase; letter-spacing:.04em; color:var(--text-secondary); }
+    .card span { font-size:.875rem; text-transform:uppercase; letter-spacing:.04em; color:var(--text-secondary); }
     .card strong { color:var(--text-primary); font-family:var(--font-display); font-size:1.75rem; line-height:1.1; }
     .card strong.text-success { color:var(--success); }
     .summary-link { color:var(--text-primary); text-decoration:none; transition:border-color var(--motion-fast), transform var(--motion-fast) var(--motion-ease); }

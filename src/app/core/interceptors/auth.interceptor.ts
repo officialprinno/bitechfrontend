@@ -1,6 +1,6 @@
-import { HttpErrorResponse, HttpInterceptorFn, HttpRequest } from '@angular/common/http';
+import { HttpErrorResponse, HttpEvent, HttpHandlerFn, HttpInterceptorFn, HttpRequest } from '@angular/common/http';
 import { inject } from '@angular/core';
-import { catchError, switchMap, throwError } from 'rxjs';
+import { Observable, catchError, switchMap, throwError } from 'rxjs';
 
 import { AuthService } from '../auth/auth.service';
 import { AppError } from '../models/app-error';
@@ -41,6 +41,17 @@ export const authInterceptor: HttpInterceptorFn = (req, next) => {
     return next(req);
   }
 
+  auth.checkSession();
+  if (auth.sessionLocked()) {
+    return auth.waitForDecision().pipe(switchMap(continued => continued
+      ? sendAuthorized(req, next, auth)
+      : throwError(() => new Error('Session ended.'))));
+  }
+  return sendAuthorized(req, next, auth);
+};
+
+function sendAuthorized(req: HttpRequest<unknown>, next: HttpHandlerFn, auth: AuthService): Observable<HttpEvent<unknown>> {
+
   const token = auth.accessToken();
   const authedReq = token ? withBearer(req, token) : req;
 
@@ -48,6 +59,13 @@ export const authInterceptor: HttpInterceptorFn = (req, next) => {
     catchError((err: unknown) => {
       if (!isUnauthorized(err) || req.headers.has('X-Auth-Retry')) {
         return throwError(() => err);
+      }
+
+      auth.checkSession();
+      if (auth.sessionLocked()) {
+        return auth.waitForDecision().pipe(switchMap(continued => continued
+          ? sendAuthorized(req, next, auth)
+          : throwError(() => new Error('Session ended.'))));
       }
 
       // No session to salvage — clear stale login state.
@@ -77,4 +95,4 @@ export const authInterceptor: HttpInterceptorFn = (req, next) => {
       );
     }),
   );
-};
+}
